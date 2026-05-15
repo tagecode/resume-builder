@@ -4,6 +4,7 @@
  */
 import assert from 'node:assert/strict'
 
+import { parseResumeBackupJson } from '../electron/backup-io'
 import { buildResumePrintHtml } from '../src/lib/resume-print-html'
 import {
   createResumeDocument,
@@ -11,6 +12,7 @@ import {
   sampleSections,
 } from '../src/lib/resume-factory'
 import type { ResumeDocument, TemplateId } from '../src/shared/resume'
+import { BACKUP_FORMAT_VERSION } from '../src/shared/backup'
 
 function doc(overrides: Partial<ResumeDocument>): ResumeDocument {
   const base = createResumeDocument({
@@ -53,5 +55,25 @@ assert.notEqual(bodies.modern, bodies.minimal)
 assert.ok(bodies.classic.includes('Georgia'), 'classic 模板应包含 serif 栈')
 assert.ok(bodies.modern.includes('system-ui'), 'modern 模板应包含 sans 栈')
 assert.ok(bodies.minimal.includes('Helvetica'), 'minimal 模板应包含 Helvetica 栈')
+
+// IO-06：备份 JSON 封装与单文件简历均可解析
+const sampleDoc = doc({ name: '备份解析测试' })
+const envelope = JSON.stringify({
+  backupFormatVersion: BACKUP_FORMAT_VERSION,
+  appId: 'resume-builder',
+  exportedAt: new Date().toISOString(),
+  resumes: [sampleDoc],
+})
+const parsedEnvelope = parseResumeBackupJson(envelope)
+assert.ok(parsedEnvelope.ok)
+if (parsedEnvelope.ok) {
+  assert.equal(parsedEnvelope.file.resumes.length, 1)
+  assert.equal(parsedEnvelope.file.resumes[0].name, '备份解析测试')
+}
+const parsedBare = parseResumeBackupJson(JSON.stringify(sampleDoc))
+assert.ok(parsedBare.ok)
+if (parsedBare.ok) {
+  assert.equal(parsedBare.file.resumes.length, 1)
+}
 
 console.log('verify:mvp — 全部断言通过（仍为离线验收，导出 PDF 请在桌面端人工打开确认）。')

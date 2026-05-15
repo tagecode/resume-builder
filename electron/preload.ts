@@ -3,6 +3,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type {
   ElectronApi,
   ExportPdfPayload,
+  MenuAction,
   ResumeCreateMode,
   ThemeMode,
 } from '../src/shared/electron'
@@ -21,6 +22,16 @@ const electronApi: ElectronApi = {
   duplicateResume: (resumeId: string) => ipcRenderer.invoke('resume:duplicate', resumeId),
   exportResumePdf: (payload: ExportPdfPayload) =>
     ipcRenderer.invoke('resume:export-pdf', payload),
+  exportBackupAll: () => ipcRenderer.invoke('backup:export-all'),
+  exportBackupOne: (resumeId: string) => ipcRenderer.invoke('backup:export-one', resumeId),
+  importBackup: () => ipcRenderer.invoke('backup:import'),
+  onMenuAction: (listener: (action: MenuAction) => void) => {
+    const channel = 'app:menu-action'
+    const handler = (_event: Electron.IpcRendererEvent, action: MenuAction) => listener(action)
+    ipcRenderer.on(channel, handler)
+    return () => ipcRenderer.removeListener(channel, handler)
+  },
+  printResumeHtml: (html: string) => ipcRenderer.invoke('resume:print-html', html),
 }
 
 contextBridge.exposeInMainWorld('electronAPI', electronApi)

@@ -3,8 +3,8 @@
 | 属性 | 内容 |
 |------|------|
 | 产品名称 | Resume Builder（个人简历制作器，一款跨平台的桌面应用） |
-| 文档版本 | 1.1 |
-| 基线修订 | 2026-05-16（§10 实现基线与 MVP 验收记录） |
+| 文档版本 | 1.2 |
+| 基线修订 | 2026-05-16（§10；补充 IO-06） |
 | 基线说明 | 与 `docs/feature.md` 功能清单一致；实现状态以本文 **§10 当前实现基线** 为准 |
 | 技术栈 | Electron、Vite、React、TypeScript、Tailwind CSS v4、shadcn/ui、electron-store |
 
@@ -240,7 +240,7 @@
 | 能力 | 状态 | 说明 |
 |------|------|------|
 | Electron 壳层 / 单主窗口 | 已具备 | `electron/main.ts` |
-| Preload / `contextIsolation` | 已具备 | `electron/preload.ts`（构建产出 `dist-electron/preload.mjs`）：应用元数据、主题、`resume:*`（列表/读/写/删/新建/复制）、`exportResumePdf` |
+| Preload / `contextIsolation` | 已具备 | `electron/preload.ts`（构建产出 `dist-electron/preload.mjs`）：应用元数据、主题、`resume:*`、`exportResumePdf`、`exportBackupAll` / `exportBackupOne` / `importBackup` |
 | 主题持久化（system/light/dark） | 已具备 | `electron-store` 存 `theme` |
 | 渲染入口 | 已具备 | `src/App.tsx` → `ResumeApp`（`src/features/resume/resume-app.tsx`） |
 | 简历 JSON 持久化（DS-01 / MVP §4） | 已具备 | `{userData}/resumes/{resumeId}.json` 原子写入（`electron/resume-storage.ts`） |
@@ -249,8 +249,9 @@
 | 实时预览（PV-01） | 已具备 | 分栏：左侧表单、右侧 iframe 同源 HTML |
 | 内置模板（TS-01/02） | 已具备 | classic / modern / minimal 三套；切换不丢字段（统一 `sections` 模型） |
 | 导出 PDF（IO-01） | 已具备 | A4/Letter、边距（由 HTML `body` padding 与编辑器滑块一致）、`scale`；Chromium `printToPDF`，PDF 级边距为 `none` 以避免与 HTML 双重留白及边距校验问题 |
+| JSON 备份/恢复（IO-06，V1.1） | 已具备 | `electron/backup-io.ts` + `backup:*` IPC；列表「导出 JSON 备份 / 从 JSON 恢复」；编辑器「JSON」导出单份；支持标准封装与单文件简历 JSON；导入为新副本（名称加「· 导入」），高版本 schema 拒绝并提示 |
 | `AppShell` 组件 | 未接入主流程 | `src/components/app-shell.tsx` 仍存在于仓库，**未**作为当前 `App` 根组件使用 |
-| MVP §5 明确不包含项 | 未实现 | 如列表搜索/排序（PM-03）、富文本（CE-02）、JSON 备份（IO-06）、系统打印（IO-03）、原生菜单（DT-05）等，按 §9 归入 V1.1 及以后 |
+| MVP §5 明确不包含项（未做部分） | 未实现 | 如列表搜索/排序（PM-03）、富文本（CE-02）、系统打印（IO-03）、原生菜单（DT-05）、分页提示（PV-03）等，按 §9 继续迭代 |
 
 ---
 

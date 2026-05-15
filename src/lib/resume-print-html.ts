@@ -1,4 +1,6 @@
-import type { ResumeDocument, TemplateId } from '@/shared/resume'
+import { getSectionOrder } from '@/lib/resume-factory'
+import { richTextToSafeHtml } from '@/lib/rich-text-lite'
+import type { ResumeDocument, SectionVisibilityKey, TemplateId } from '@/shared/resume'
 
 function esc(s: string): string {
   return s
@@ -17,17 +19,17 @@ function linesToItems(text: string): string {
     .join('')
 }
 
-function renderBody(resume: ResumeDocument): string {
+function bodyHtmlForSection(key: SectionVisibilityKey, resume: ResumeDocument): string | null {
   const { sections: s, visibility: v } = resume
-  const parts: string[] = []
-
-  if (v.personal) {
-    const p = s.personal
-    const links =
-      p.links.length > 0
-        ? `<div class="links">${p.links.map((l) => `<a href="${esc(l.url)}">${esc(l.label)}</a>`).join(' · ')}</div>`
-        : ''
-    parts.push(`
+  switch (key) {
+    case 'personal': {
+      if (!v.personal) return null
+      const p = s.personal
+      const links =
+        p.links.length > 0
+          ? `<div class="links">${p.links.map((l) => `<a href="${esc(l.url)}">${esc(l.label)}</a>`).join(' · ')}</div>`
+          : ''
+      return `
       <header class="personal">
         ${p.photoUrl ? `<img class="photo" src="${esc(p.photoUrl)}" alt="" />` : ''}
         <div class="name-block">
@@ -37,64 +39,65 @@ function renderBody(resume: ResumeDocument): string {
           ${links}
         </div>
       </header>
-    `)
-  }
-
-  if (v.summary && (s.summary.headline || s.summary.body)) {
-    parts.push(`
+    `
+    }
+    case 'summary': {
+      if (!v.summary || !(s.summary.headline || s.summary.body)) return null
+      const bodyRich = s.summary.body.trim() ? richTextToSafeHtml(s.summary.body) : ''
+      return `
       <section class="block">
         <h2>总结与意向</h2>
         ${s.summary.headline ? `<p class="subhead">${esc(s.summary.headline)}</p>` : ''}
-        ${s.summary.body ? `<div class="pre">${esc(s.summary.body)}</div>` : ''}
+        ${bodyRich ? `<div class="pre rich-wrap">${bodyRich}</div>` : ''}
       </section>
-    `)
-  }
-
-  if (v.experience && s.experience.entries.length > 0) {
-    const rows = s.experience.entries
-      .map(
-        (e) => `
+    `
+    }
+    case 'experience': {
+      if (!v.experience || s.experience.entries.length === 0) return null
+      const rows = s.experience.entries
+        .map(
+          (e) => `
         <article class="item">
           <div class="item-head">
             <strong>${esc(e.company)}</strong>
             <span class="muted">${esc(e.role)}</span>
             <span class="dates">${esc(e.startDate)} — ${esc(e.endDate)}</span>
           </div>
-          ${e.description ? `<div class="pre">${esc(e.description)}</div>` : ''}
+          ${e.description ? `<div class="pre rich-wrap">${richTextToSafeHtml(e.description)}</div>` : ''}
         </article>
       `,
-      )
-      .join('')
-    parts.push(`<section class="block"><h2>工作经历</h2>${rows}</section>`)
-  }
-
-  if (v.education && s.education.entries.length > 0) {
-    const rows = s.education.entries
-      .map(
-        (e) => `
+        )
+        .join('')
+      return `<section class="block"><h2>工作经历</h2>${rows}</section>`
+    }
+    case 'education': {
+      if (!v.education || s.education.entries.length === 0) return null
+      const rows = s.education.entries
+        .map(
+          (e) => `
         <article class="item">
           <div class="item-head">
             <strong>${esc(e.school)}</strong>
             <span class="muted">${esc(e.degree)} · ${esc(e.field)}</span>
             <span class="dates">${esc(e.startDate)} — ${esc(e.endDate)}</span>
           </div>
-          ${e.description ? `<div class="pre small">${esc(e.description)}</div>` : ''}
+          ${e.description ? `<div class="pre small rich-wrap">${richTextToSafeHtml(e.description)}</div>` : ''}
         </article>
       `,
-      )
-      .join('')
-    parts.push(`<section class="block"><h2>教育背景</h2>${rows}</section>`)
-  }
-
-  if (v.skills && s.skills.text.trim()) {
-    const items = linesToItems(s.skills.text)
-    parts.push(`<section class="block"><h2>技能</h2><ul class="tags">${items}</ul></section>`)
-  }
-
-  if (v.projects && s.projects.entries.length > 0) {
-    const rows = s.projects.entries
-      .map(
-        (e) => `
+        )
+        .join('')
+      return `<section class="block"><h2>教育背景</h2>${rows}</section>`
+    }
+    case 'skills': {
+      if (!v.skills || !s.skills.text.trim()) return null
+      const items = linesToItems(s.skills.text)
+      return `<section class="block"><h2>技能</h2><ul class="tags">${items}</ul></section>`
+    }
+    case 'projects': {
+      if (!v.projects || s.projects.entries.length === 0) return null
+      const rows = s.projects.entries
+        .map(
+          (e) => `
         <article class="item">
           <div class="item-head">
             <strong>${esc(e.name)}</strong>
@@ -102,47 +105,58 @@ function renderBody(resume: ResumeDocument): string {
             <span class="dates">${esc(e.techStack)}</span>
           </div>
           <p class="mini-dates">${esc(e.startDate)} — ${esc(e.endDate)}</p>
-          ${e.description ? `<div class="pre">${esc(e.description)}</div>` : ''}
+          ${e.description ? `<div class="pre rich-wrap">${richTextToSafeHtml(e.description)}</div>` : ''}
         </article>
       `,
-      )
-      .join('')
-    parts.push(`<section class="block"><h2>项目经验</h2>${rows}</section>`)
-  }
-
-  if (v.certificates && s.certificates.text.trim()) {
-    parts.push(`
+        )
+        .join('')
+      return `<section class="block"><h2>项目经验</h2>${rows}</section>`
+    }
+    case 'certificates': {
+      if (!v.certificates || !s.certificates.text.trim()) return null
+      return `
       <section class="block">
         <h2>证书与奖项</h2>
         <ul class="tags">${linesToItems(s.certificates.text)}</ul>
       </section>
-    `)
-  }
-
-  if (v.languages && s.languages.text.trim()) {
-    parts.push(`
+    `
+    }
+    case 'languages': {
+      if (!v.languages || !s.languages.text.trim()) return null
+      return `
       <section class="block">
         <h2>语言</h2>
         <ul class="tags">${linesToItems(s.languages.text)}</ul>
       </section>
-    `)
-  }
-
-  if (v.custom && s.custom.blocks.length > 0) {
-    const blocks = s.custom.blocks
-      .map(
-        (b) => `
+    `
+    }
+    case 'custom': {
+      if (!v.custom || s.custom.blocks.length === 0) return null
+      const blocks = s.custom.blocks
+        .map(
+          (b) => `
         <article class="item">
           <h3>${esc(b.title)}</h3>
-          ${b.body ? `<div class="pre">${esc(b.body)}</div>` : ''}
+          ${b.body ? `<div class="pre rich-wrap">${richTextToSafeHtml(b.body)}</div>` : ''}
         </article>
       `,
-      )
-      .join('')
-    parts.push(`<section class="block custom">${blocks}</section>`)
+        )
+        .join('')
+      return `<section class="block custom">${blocks}</section>`
+    }
+    default:
+      return null
   }
+}
 
-  return parts.join('\n')
+function renderBody(resume: ResumeDocument): string {
+  const order = getSectionOrder(resume)
+  const chunks: string[] = []
+  for (const key of order) {
+    const html = bodyHtmlForSection(key, resume)
+    if (html) chunks.push(html)
+  }
+  return chunks.join('\n')
 }
 
 function stylesForTemplate(id: TemplateId, pageMarginMm: number): string {
@@ -158,6 +172,13 @@ function stylesForTemplate(id: TemplateId, pageMarginMm: number): string {
       print-color-adjust: exact;
     }
     .pre { white-space: pre-wrap; word-break: break-word; line-height: 1.55; font-size: 10.5pt; }
+    .rich-wrap .rich-text { white-space: normal; word-break: break-word; }
+    .rich-text .rt-line { margin: 0.2em 0; }
+    .rich-text .rt-ul { margin: 0.35em 0 0.35em 1.2em; padding: 0; list-style: disc; }
+    .rich-text ul.rt-ul li { margin: 0.12em 0; }
+    .rich-text strong { font-weight: 600; }
+    .rich-text em { font-style: italic; }
+    .rich-text a { color: #0b57d0; text-decoration: none; }
     .small { font-size: 10pt; }
     .muted { color: #444; font-weight: 500; }
     .dates, .mini-dates { color: #555; font-size: 9.5pt; }
@@ -212,7 +233,6 @@ function stylesForTemplate(id: TemplateId, pageMarginMm: number): string {
     )
   }
 
-  // minimal
   return (
     base +
     `
@@ -227,6 +247,22 @@ function stylesForTemplate(id: TemplateId, pageMarginMm: number): string {
     .item-head { flex-direction: column; gap: 2px; }
   `
   )
+}
+
+/** 预览 iframe 内 body.scrollHeight 估算打印约几页（PV-03，近似值）。 */
+export function estimatePrintPageCount(
+  bodyScrollHeightPx: number,
+  marginMm: number,
+  paper: 'A4' | 'Letter' = 'A4',
+): number {
+  const mmToPx = 96 / 25.4
+  const pageHeightMm = paper === 'A4' ? 297 : 279.4
+  const contentMm = Math.max(20, pageHeightMm - 2 * Math.max(0, marginMm))
+  const contentPx = contentMm * mmToPx
+  if (!Number.isFinite(bodyScrollHeightPx) || bodyScrollHeightPx <= 0) {
+    return 1
+  }
+  return Math.max(1, Math.ceil(bodyScrollHeightPx / contentPx))
 }
 
 export interface ResumePrintHtmlOptions {

@@ -7,9 +7,51 @@ import type {
   ResumeDocument,
   ResumeSections,
   SectionVisibility,
+  SectionVisibilityKey,
   TemplateId,
 } from '../shared/resume'
-import { RESUME_SCHEMA_VERSION } from '../shared/resume'
+import { DEFAULT_SECTION_ORDER, RESUME_SCHEMA_VERSION } from '../shared/resume'
+
+export function getSectionOrder(doc: ResumeDocument): SectionVisibilityKey[] {
+  const o = doc.sectionOrder
+  if (!o || o.length !== DEFAULT_SECTION_ORDER.length) {
+    return [...DEFAULT_SECTION_ORDER]
+  }
+  const set = new Set(o)
+  if (set.size !== DEFAULT_SECTION_ORDER.length) {
+    return [...DEFAULT_SECTION_ORDER]
+  }
+  for (const k of DEFAULT_SECTION_ORDER) {
+    if (!set.has(k)) {
+      return [...DEFAULT_SECTION_ORDER]
+    }
+  }
+  return [...o]
+}
+
+export function reorderSectionKeys(
+  order: SectionVisibilityKey[],
+  from: SectionVisibilityKey,
+  to: SectionVisibilityKey,
+): SectionVisibilityKey[] {
+  const i = order.indexOf(from)
+  const j = order.indexOf(to)
+  if (i < 0 || j < 0 || i === j) {
+    return order
+  }
+  const next = [...order]
+  const [item] = next.splice(i, 1)
+  next.splice(j, 0, item)
+  return next
+}
+
+export function normalizeResumeDocument(doc: ResumeDocument): ResumeDocument {
+  return {
+    ...doc,
+    schemaVersion: RESUME_SCHEMA_VERSION,
+    sectionOrder: getSectionOrder(doc),
+  }
+}
 
 export function newEntityId(): string {
   return globalThis.crypto?.randomUUID?.() ?? `id-${Date.now()}-${Math.random().toString(16).slice(2)}`
@@ -127,6 +169,7 @@ export function createResumeDocument(options: {
     updatedAt: now,
     templateId: options.templateId ?? 'classic',
     visibility: defaultVisibility(),
+    sectionOrder: [...DEFAULT_SECTION_ORDER],
     sections: options.sections ?? emptySections(),
   }
 }
@@ -138,6 +181,20 @@ export function cloneResumeForCopy(source: ResumeDocument): ResumeDocument {
   cloned.name = `${source.name} 的副本`
   cloned.updatedAt = now
   return cloned
+}
+
+/** 从备份导入：新 ID、名称加后缀，避免覆盖本地同名同 ID 文件。 */
+export function cloneResumeForImport(source: ResumeDocument): ResumeDocument {
+  const cloned = structuredClone(source) as ResumeDocument
+  cloned.resumeId = newEntityId()
+  const base = source.name.trim()
+  const suffix = ' · 导入'
+  const maxBase = 120 - suffix.length
+  const trimmedBase = base.length > maxBase ? `${base.slice(0, Math.max(0, maxBase - 1))}…` : base
+  cloned.name = `${trimmedBase}${suffix}`
+  cloned.updatedAt = new Date().toISOString()
+  cloned.schemaVersion = RESUME_SCHEMA_VERSION
+  return normalizeResumeDocument(cloned)
 }
 
 export function validateResumeName(name: string): string | null {

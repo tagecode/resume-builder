@@ -2,7 +2,7 @@ import { mkdir, readdir, readFile, rename, unlink, writeFile } from 'node:fs/pro
 import path from 'node:path'
 
 import type { ResumeDocument, ResumeListItem } from '../src/shared/resume'
-import { RESUME_SCHEMA_VERSION } from '../src/shared/resume'
+import { normalizeResumeDocument } from '../src/lib/resume-factory.ts'
 
 export function getResumesDir(rootUserData: string): string {
   return path.join(rootUserData, 'resumes')
@@ -45,11 +45,7 @@ export async function readResume(resumesDir: string, resumeId: string): Promise<
   const fp = resumeFilePath(resumesDir, resumeId)
   try {
     const raw = await readFile(fp, 'utf8')
-    const doc = JSON.parse(raw) as ResumeDocument
-    if (doc.schemaVersion !== RESUME_SCHEMA_VERSION) {
-      doc.schemaVersion = RESUME_SCHEMA_VERSION
-    }
-    return doc
+    return normalizeResumeDocument(JSON.parse(raw) as ResumeDocument)
   } catch {
     return null
   }

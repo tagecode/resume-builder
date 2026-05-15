@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowLeft, Save } from 'lucide-react'
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
+import { ArrowLeft, FileJson, GripVertical, Save } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader } from '@/components/ui/card'
@@ -12,8 +12,8 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
-import { buildResumePrintHtml } from '@/lib/resume-print-html'
-import { newEntityId, validateResumeName } from '@/lib/resume-factory'
+import { buildResumePrintHtml, estimatePrintPageCount } from '@/lib/resume-print-html'
+import { getSectionOrder, newEntityId, reorderSectionKeys, validateResumeName } from '@/lib/resume-factory'
 import type {
   CustomBlock,
   EducationEntry,
@@ -40,6 +40,17 @@ const VISIBILITY_LABELS: Record<SectionVisibilityKey, string> = {
   custom: '自定义模块',
 }
 
+const RICH_TEXT_HINT =
+  '轻量语法：**粗体**、*斜体*、行首「- 」无序列表、[显示文字](https://链接)'
+
+export type ResumeEditorHandle = {
+  save: () => Promise<boolean>
+  print: () => Promise<void>
+  exportPdf: () => void
+  backToList: () => void
+  exportBackupOne: () => void
+}
+
 function Field({
   label,
   children,
@@ -63,19 +74,67 @@ function lineInputClass() {
   return 'flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50'
 }
 
-export function ResumeEditorPage({
+
+function DraggableSectionCard({
+  sectionKey,
+  onReorder,
+  children,
+}: {
+  sectionKey: SectionVisibilityKey
+  onReorder: (from: SectionVisibilityKey, to: SectionVisibilityKey) => void
+  children: React.ReactNode
+}) {
+  return (
+    <div
+      className="group relative pl-5"
+      onDragOver={(e) => {
+        e.preventDefault()
+        e.dataTransfer.dropEffect = 'move'
+      }}
+      onDrop={(e) => {
+        e.preventDefault()
+        const from = e.dataTransfer.getData('text/plain') as SectionVisibilityKey
+        if (from && from !== sectionKey) {
+          onReorder(from, sectionKey)
+        }
+      }}
+    >
+      <div
+        className="absolute left-0 top-9 z-10 flex h-8 w-5 cursor-grab items-center justify-center rounded text-muted-foreground opacity-0 transition-opacity hover:bg-muted/80 hover:text-foreground group-hover:opacity-100 active:cursor-grabbing"
+        draggable
+        role="button"
+        tabIndex={0}
+        aria-label="拖拽调整模块顺序"
+        title="拖拽调整模块顺序"
+        onDragStart={(e) => {
+          e.dataTransfer.setData('text/plain', sectionKey)
+          e.dataTransfer.effectAllowed = 'move'
+        }}
+      >
+        <GripVertical className="size-4" />
+      </div>
+      {children}
+    </div>
+  )
+}
+
+export const ResumeEditorPage = forwardRef<
+  ResumeEditorHandle,
+  {
+    resumeId: string
+    theme: ThemeMode
+    onThemeChange: (t: ThemeMode) => void
+    onBack: () => void
+    listRefreshKey: () => void
+  }
+>(function ResumeEditorPage({
   resumeId,
   theme,
   onThemeChange,
   onBack,
   listRefreshKey,
-}: {
-  resumeId: string
-  theme: ThemeMode
-  onThemeChange: (t: ThemeMode) => void
-  onBack: () => void
-  listRefreshKey: () => void
-}) {
+},
+ref) {
   const [doc, setDoc] = useState<ResumeDocument | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [savedSnapshot, setSavedSnapshot] = useState('')
@@ -87,6 +146,8 @@ export function ResumeEditorPage({
   const [pdfScale, setPdfScale] = useState(1)
 
   const [unsavedOpen, setUnsavedOpen] = useState(false)
+  const [previewPageCount, setPreviewPageCount] = useState<number | null>(null)
+  const previewIframeRef = useRef<HTMLIFrameElement>(null)
 
   const docRef = useRef(doc)
   docRef.current = doc
@@ -98,6 +159,10 @@ export function ResumeEditorPage({
     () => (doc ? buildResumePrintHtml(doc, { pageMarginMm: pdfMarginMm }) : ''),
     [doc, pdfMarginMm],
   )
+
+  useEffect(() => {
+    setPreviewPageCount(null)
+  }, [previewHtml])
 
   const persist = useCallback(async (explicit?: ResumeDocument): Promise<boolean> => {
     if (!window.electronAPI) {
@@ -209,6 +274,28 @@ export function ResumeEditorPage({
     setDoc((prev) => (prev ? updater(prev) : prev))
   }
 
+  function handleSectionReorder(from: SectionVisibilityKey, to: SectionVisibilityKey) {
+    patchDoc((p) => ({
+      ...p,
+      sectionOrder: reorderSectionKeys(getSectionOrder(p), from, to),
+    }))
+  }
+
+  async function handleExportBackupOne() {
+    const saved = await persist()
+    if (!saved) {
+      return
+    }
+    const res = await window.electronAPI!.exportBackupOne(resumeId)
+    if (res.ok) {
+      setSaveHint(`已导出 JSON：${res.filePath}`)
+      window.setTimeout(() => setSaveHint(null), 4000)
+    } else if (res.reason === 'error') {
+      setSaveHint(`导出失败：${res.message}`)
+      window.setTimeout(() => setSaveHint(null), 4500)
+    }
+  }
+
   async function handleExportPdf() {
     const d = docRef.current
     if (!d) {
@@ -239,6 +326,42 @@ export function ResumeEditorPage({
     }
   }
 
+  const editorApiRef = useRef({
+    persist,
+    tryBack,
+    handleExportPdf,
+    handleExportBackupOne,
+    pdfMarginMm,
+  })
+  editorApiRef.current = { persist, tryBack, handleExportPdf, handleExportBackupOne, pdfMarginMm }
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      save: () => editorApiRef.current.persist(),
+      print: async () => {
+        const d = docRef.current
+        const { pdfMarginMm: mm } = editorApiRef.current
+        if (!d || !window.electronAPI?.printResumeHtml) {
+          return
+        }
+        const html = buildResumePrintHtml(d, { pageMarginMm: mm })
+        const res = await window.electronAPI.printResumeHtml(html)
+        if (res.ok) {
+          setSaveHint('已打开系统打印')
+          window.setTimeout(() => setSaveHint(null), 2500)
+        } else if (res.reason === 'error') {
+          setSaveHint(res.message ?? '打印失败')
+          window.setTimeout(() => setSaveHint(null), 4000)
+        }
+      },
+      exportPdf: () => void editorApiRef.current.handleExportPdf(),
+      backToList: () => editorApiRef.current.tryBack(),
+      exportBackupOne: () => void editorApiRef.current.handleExportBackupOne(),
+    }),
+    [],
+  )
+
   if (loadError) {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center gap-4 p-8">
@@ -252,6 +375,549 @@ export function ResumeEditorPage({
     return (
       <div className="flex min-h-screen items-center justify-center text-muted-foreground">加载中…</div>
     )
+  }
+
+  function sectionCard(section: SectionVisibilityKey): React.ReactNode {
+    if (!doc) {
+      return null
+    }
+    switch (section) {
+      case 'personal':
+        return (
+          <Card>
+            <CardHeader className="text-sm font-semibold">个人信息</CardHeader>
+            <CardContent className="space-y-3">
+              <Field label="姓名">
+                <input
+                  className={lineInputClass()}
+                  value={doc.sections.personal.fullName}
+                  onChange={(e) =>
+                    patchDoc((p) => ({
+                      ...p,
+                      sections: {
+                        ...p.sections,
+                        personal: { ...p.sections.personal, fullName: e.target.value },
+                      },
+                    }))
+                  }
+                />
+              </Field>
+              <Field label="职位 / 头衔">
+                <input
+                  className={lineInputClass()}
+                  value={doc.sections.personal.title}
+                  onChange={(e) =>
+                    patchDoc((p) => ({
+                      ...p,
+                      sections: {
+                        ...p.sections,
+                        personal: { ...p.sections.personal, title: e.target.value },
+                      },
+                    }))
+                  }
+                />
+              </Field>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Field label="邮箱">
+                  <input
+                    className={lineInputClass()}
+                    value={doc.sections.personal.email}
+                    onChange={(e) =>
+                      patchDoc((p) => ({
+                        ...p,
+                        sections: {
+                          ...p.sections,
+                          personal: { ...p.sections.personal, email: e.target.value },
+                        },
+                      }))
+                    }
+                  />
+                </Field>
+                <Field label="电话">
+                  <input
+                    className={lineInputClass()}
+                    value={doc.sections.personal.phone}
+                    onChange={(e) =>
+                      patchDoc((p) => ({
+                        ...p,
+                        sections: {
+                          ...p.sections,
+                          personal: { ...p.sections.personal, phone: e.target.value },
+                        },
+                      }))
+                    }
+                  />
+                </Field>
+              </div>
+              <Field label="地点">
+                <input
+                  className={lineInputClass()}
+                  value={doc.sections.personal.location}
+                  onChange={(e) =>
+                    patchDoc((p) => ({
+                      ...p,
+                      sections: {
+                        ...p.sections,
+                        personal: { ...p.sections.personal, location: e.target.value },
+                      },
+                    }))
+                  }
+                />
+              </Field>
+              <Field label="照片 URL（可选）">
+                <input
+                  className={lineInputClass()}
+                  value={doc.sections.personal.photoUrl}
+                  onChange={(e) =>
+                    patchDoc((p) => ({
+                      ...p,
+                      sections: {
+                        ...p.sections,
+                        personal: { ...p.sections.personal, photoUrl: e.target.value },
+                      },
+                    }))
+                  }
+                />
+              </Field>
+              <div className="space-y-2">
+                <span className="text-xs font-medium text-muted-foreground">社交链接</span>
+                {doc.sections.personal.links.map((link, i) => (
+                  <div key={i} className="flex gap-2">
+                    <input
+                      placeholder="标签"
+                      className={lineInputClass()}
+                      value={link.label}
+                      onChange={(e) =>
+                        patchDoc((p) => {
+                          const links = [...p.sections.personal.links]
+                          links[i] = { ...links[i], label: e.target.value }
+                          return {
+                            ...p,
+                            sections: { ...p.sections, personal: { ...p.sections.personal, links } },
+                          }
+                        })
+                      }
+                    />
+                    <input
+                      placeholder="https://"
+                      className={lineInputClass()}
+                      value={link.url}
+                      onChange={(e) =>
+                        patchDoc((p) => {
+                          const links = [...p.sections.personal.links]
+                          links[i] = { ...links[i], url: e.target.value }
+                          return {
+                            ...p,
+                            sections: { ...p.sections, personal: { ...p.sections.personal, links } },
+                          }
+                        })
+                      }
+                    />
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      type="button"
+                      onClick={() =>
+                        patchDoc((p) => ({
+                          ...p,
+                          sections: {
+                            ...p.sections,
+                            personal: {
+                              ...p.sections.personal,
+                              links: p.sections.personal.links.filter((_, j) => j !== i),
+                            },
+                          },
+                        }))
+                      }
+                    >
+                      删
+                    </Button>
+                  </div>
+                ))}
+                <Button
+                  size="sm"
+                  variant="outline"
+                  type="button"
+                  onClick={() =>
+                    patchDoc((p) => ({
+                      ...p,
+                      sections: {
+                        ...p.sections,
+                        personal: {
+                          ...p.sections.personal,
+                          links: [...p.sections.personal.links, { label: '', url: '' }],
+                        },
+                      },
+                    }))
+                  }
+                >
+                  添加链接
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        )
+      case 'summary':
+        return (
+          <Card>
+            <CardHeader className="text-sm font-semibold">总结与意向</CardHeader>
+            <CardContent className="space-y-3">
+              <Field label="标题 / 意向一行">
+                <input
+                  className={lineInputClass()}
+                  value={doc.sections.summary.headline}
+                  onChange={(e) =>
+                    patchDoc((p) => ({
+                      ...p,
+                      sections: {
+                        ...p.sections,
+                        summary: { ...p.sections.summary, headline: e.target.value },
+                      },
+                    }))
+                  }
+                />
+              </Field>
+              <Field label="正文">
+                <textarea
+                  className={textAreaClass()}
+                  value={doc.sections.summary.body}
+                  onChange={(e) =>
+                    patchDoc((p) => ({
+                      ...p,
+                      sections: {
+                        ...p.sections,
+                        summary: { ...p.sections.summary, body: e.target.value },
+                      },
+                    }))
+                  }
+                />
+              </Field>
+              <p className="text-xs text-muted-foreground">{RICH_TEXT_HINT}</p>
+            </CardContent>
+          </Card>
+        )
+      case 'experience':
+        return (
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between">
+              <span className="text-sm font-semibold">工作经历</span>
+              <Button
+                size="sm"
+                variant="outline"
+                type="button"
+                onClick={() =>
+                  patchDoc((p) => ({
+                    ...p,
+                    sections: {
+                      ...p.sections,
+                      experience: {
+                        entries: [
+                          ...p.sections.experience.entries,
+                          {
+                            id: newEntityId(),
+                            company: '',
+                            role: '',
+                            startDate: '',
+                            endDate: '',
+                            description: '',
+                          },
+                        ],
+                      },
+                    },
+                  }))
+                }
+              >
+                添加条目
+              </Button>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <p className="text-xs text-muted-foreground">{RICH_TEXT_HINT}</p>
+              {doc.sections.experience.entries.map((entry, idx) => (
+                <ExperienceBlock
+                  key={entry.id}
+                  entry={entry}
+                  onChange={(next) =>
+                    patchDoc((p) => {
+                      const entries = [...p.sections.experience.entries]
+                      entries[idx] = next
+                      return {
+                        ...p,
+                        sections: { ...p.sections, experience: { entries } },
+                      }
+                    })
+                  }
+                  onRemove={() =>
+                    patchDoc((p) => ({
+                      ...p,
+                      sections: {
+                        ...p.sections,
+                        experience: {
+                          entries: p.sections.experience.entries.filter((_, j) => j !== idx),
+                        },
+                      },
+                    }))
+                  }
+                />
+              ))}
+              {doc.sections.experience.entries.length === 0 ? (
+                <p className="text-sm text-muted-foreground">暂无经历，可点击「添加条目」。</p>
+              ) : null}
+            </CardContent>
+          </Card>
+        )
+      case 'education':
+        return (
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between">
+              <span className="text-sm font-semibold">教育背景</span>
+              <Button
+                size="sm"
+                variant="outline"
+                type="button"
+                onClick={() =>
+                  patchDoc((p) => ({
+                    ...p,
+                    sections: {
+                      ...p.sections,
+                      education: {
+                        entries: [
+                          ...p.sections.education.entries,
+                          {
+                            id: newEntityId(),
+                            school: '',
+                            degree: '',
+                            field: '',
+                            startDate: '',
+                            endDate: '',
+                            description: '',
+                          },
+                        ],
+                      },
+                    },
+                  }))
+                }
+              >
+                添加条目
+              </Button>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <p className="text-xs text-muted-foreground">{RICH_TEXT_HINT}</p>
+              {doc.sections.education.entries.map((entry, idx) => (
+                <EducationBlock
+                  key={entry.id}
+                  entry={entry}
+                  onChange={(next) =>
+                    patchDoc((p) => {
+                      const entries = [...p.sections.education.entries]
+                      entries[idx] = next
+                      return {
+                        ...p,
+                        sections: { ...p.sections, education: { entries } },
+                      }
+                    })
+                  }
+                  onRemove={() =>
+                    patchDoc((p) => ({
+                      ...p,
+                      sections: {
+                        ...p.sections,
+                        education: {
+                          entries: p.sections.education.entries.filter((_, j) => j !== idx),
+                        },
+                      },
+                    }))
+                  }
+                />
+              ))}
+            </CardContent>
+          </Card>
+        )
+      case 'skills':
+        return (
+          <Card>
+            <CardHeader className="text-sm font-semibold">技能（每行一项）</CardHeader>
+            <CardContent>
+              <textarea
+                className={textAreaClass()}
+                rows={6}
+                value={doc.sections.skills.text}
+                onChange={(e) =>
+                  patchDoc((p) => ({
+                    ...p,
+                    sections: { ...p.sections, skills: { text: e.target.value } },
+                  }))
+                }
+              />
+            </CardContent>
+          </Card>
+        )
+      case 'projects':
+        return (
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between">
+              <span className="text-sm font-semibold">项目经验</span>
+              <Button
+                size="sm"
+                variant="outline"
+                type="button"
+                onClick={() =>
+                  patchDoc((p) => ({
+                    ...p,
+                    sections: {
+                      ...p.sections,
+                      projects: {
+                        entries: [
+                          ...p.sections.projects.entries,
+                          {
+                            id: newEntityId(),
+                            name: '',
+                            role: '',
+                            techStack: '',
+                            startDate: '',
+                            endDate: '',
+                            description: '',
+                          },
+                        ],
+                      },
+                    },
+                  }))
+                }
+              >
+                添加条目
+              </Button>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <p className="text-xs text-muted-foreground">{RICH_TEXT_HINT}</p>
+              {doc.sections.projects.entries.map((entry, idx) => (
+                <ProjectBlock
+                  key={entry.id}
+                  entry={entry}
+                  onChange={(next) =>
+                    patchDoc((p) => {
+                      const entries = [...p.sections.projects.entries]
+                      entries[idx] = next
+                      return {
+                        ...p,
+                        sections: { ...p.sections, projects: { entries } },
+                      }
+                    })
+                  }
+                  onRemove={() =>
+                    patchDoc((p) => ({
+                      ...p,
+                      sections: {
+                        ...p.sections,
+                        projects: {
+                          entries: p.sections.projects.entries.filter((_, j) => j !== idx),
+                        },
+                      },
+                    }))
+                  }
+                />
+              ))}
+            </CardContent>
+          </Card>
+        )
+      case 'certificates':
+        return (
+          <Card>
+            <CardHeader className="text-sm font-semibold">证书与奖项（每行一项）</CardHeader>
+            <CardContent>
+              <textarea
+                className={textAreaClass()}
+                rows={4}
+                value={doc.sections.certificates.text}
+                onChange={(e) =>
+                  patchDoc((p) => ({
+                    ...p,
+                    sections: { ...p.sections, certificates: { text: e.target.value } },
+                  }))
+                }
+              />
+            </CardContent>
+          </Card>
+        )
+      case 'languages':
+        return (
+          <Card>
+            <CardHeader className="text-sm font-semibold">语言（每行一项）</CardHeader>
+            <CardContent>
+              <textarea
+                className={textAreaClass()}
+                rows={4}
+                value={doc.sections.languages.text}
+                onChange={(e) =>
+                  patchDoc((p) => ({
+                    ...p,
+                    sections: { ...p.sections, languages: { text: e.target.value } },
+                  }))
+                }
+              />
+            </CardContent>
+          </Card>
+        )
+      case 'custom':
+        return (
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between">
+              <span className="text-sm font-semibold">自定义模块</span>
+              <Button
+                size="sm"
+                variant="outline"
+                type="button"
+                onClick={() =>
+                  patchDoc((p) => ({
+                    ...p,
+                    sections: {
+                      ...p.sections,
+                      custom: {
+                        blocks: [
+                          ...p.sections.custom.blocks,
+                          { id: newEntityId(), title: '新模块', body: '' },
+                        ],
+                      },
+                    },
+                  }))
+                }
+              >
+                添加区块
+              </Button>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <p className="text-xs text-muted-foreground">{RICH_TEXT_HINT}</p>
+              {doc.sections.custom.blocks.map((block, idx) => (
+                <CustomBlockEditor
+                  key={block.id}
+                  block={block}
+                  onChange={(next) =>
+                    patchDoc((p) => {
+                      const blocks = [...p.sections.custom.blocks]
+                      blocks[idx] = next
+                      return {
+                        ...p,
+                        sections: { ...p.sections, custom: { blocks } },
+                      }
+                    })
+                  }
+                  onRemove={() =>
+                    patchDoc((p) => ({
+                      ...p,
+                      sections: {
+                        ...p.sections,
+                        custom: {
+                          blocks: p.sections.custom.blocks.filter((_, j) => j !== idx),
+                        },
+                      },
+                    }))
+                  }
+                />
+              ))}
+            </CardContent>
+          </Card>
+        )
+      default:
+        return null
+    }
   }
 
   return (
@@ -275,6 +941,10 @@ export function ResumeEditorPage({
           <Button size="sm" variant="secondary" onClick={() => void persist()}>
             <Save className="size-4" />
             保存
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => void handleExportBackupOne()}>
+            <FileJson className="size-4" />
+            JSON
           </Button>
           <div className="ml-auto flex flex-wrap items-center gap-2">
             <ThemeControls theme={theme} onChange={onThemeChange} />
@@ -364,526 +1034,37 @@ export function ResumeEditorPage({
               </CardContent>
             </Card>
 
-            <Card>
-              <CardHeader className="text-sm font-semibold">个人信息</CardHeader>
-              <CardContent className="space-y-3">
-                <Field label="姓名">
-                  <input
-                    className={lineInputClass()}
-                    value={doc.sections.personal.fullName}
-                    onChange={(e) =>
-                      patchDoc((p) => ({
-                        ...p,
-                        sections: {
-                          ...p.sections,
-                          personal: { ...p.sections.personal, fullName: e.target.value },
-                        },
-                      }))
-                    }
-                  />
-                </Field>
-                <Field label="职位 / 头衔">
-                  <input
-                    className={lineInputClass()}
-                    value={doc.sections.personal.title}
-                    onChange={(e) =>
-                      patchDoc((p) => ({
-                        ...p,
-                        sections: {
-                          ...p.sections,
-                          personal: { ...p.sections.personal, title: e.target.value },
-                        },
-                      }))
-                    }
-                  />
-                </Field>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <Field label="邮箱">
-                    <input
-                      className={lineInputClass()}
-                      value={doc.sections.personal.email}
-                      onChange={(e) =>
-                        patchDoc((p) => ({
-                          ...p,
-                          sections: {
-                            ...p.sections,
-                            personal: { ...p.sections.personal, email: e.target.value },
-                          },
-                        }))
-                      }
-                    />
-                  </Field>
-                  <Field label="电话">
-                    <input
-                      className={lineInputClass()}
-                      value={doc.sections.personal.phone}
-                      onChange={(e) =>
-                        patchDoc((p) => ({
-                          ...p,
-                          sections: {
-                            ...p.sections,
-                            personal: { ...p.sections.personal, phone: e.target.value },
-                          },
-                        }))
-                      }
-                    />
-                  </Field>
-                </div>
-                <Field label="地点">
-                  <input
-                    className={lineInputClass()}
-                    value={doc.sections.personal.location}
-                    onChange={(e) =>
-                      patchDoc((p) => ({
-                        ...p,
-                        sections: {
-                          ...p.sections,
-                          personal: { ...p.sections.personal, location: e.target.value },
-                        },
-                      }))
-                    }
-                  />
-                </Field>
-                <Field label="照片 URL（可选）">
-                  <input
-                    className={lineInputClass()}
-                    value={doc.sections.personal.photoUrl}
-                    onChange={(e) =>
-                      patchDoc((p) => ({
-                        ...p,
-                        sections: {
-                          ...p.sections,
-                          personal: { ...p.sections.personal, photoUrl: e.target.value },
-                        },
-                      }))
-                    }
-                  />
-                </Field>
-                <div className="space-y-2">
-                  <span className="text-xs font-medium text-muted-foreground">社交链接</span>
-                  {doc.sections.personal.links.map((link, i) => (
-                    <div key={i} className="flex gap-2">
-                      <input
-                        placeholder="标签"
-                        className={lineInputClass()}
-                        value={link.label}
-                        onChange={(e) =>
-                          patchDoc((p) => {
-                            const links = [...p.sections.personal.links]
-                            links[i] = { ...links[i], label: e.target.value }
-                            return {
-                              ...p,
-                              sections: { ...p.sections, personal: { ...p.sections.personal, links } },
-                            }
-                          })
-                        }
-                      />
-                      <input
-                        placeholder="https://"
-                        className={lineInputClass()}
-                        value={link.url}
-                        onChange={(e) =>
-                          patchDoc((p) => {
-                            const links = [...p.sections.personal.links]
-                            links[i] = { ...links[i], url: e.target.value }
-                            return {
-                              ...p,
-                              sections: { ...p.sections, personal: { ...p.sections.personal, links } },
-                            }
-                          })
-                        }
-                      />
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        type="button"
-                        onClick={() =>
-                          patchDoc((p) => ({
-                            ...p,
-                            sections: {
-                              ...p.sections,
-                              personal: {
-                                ...p.sections.personal,
-                                links: p.sections.personal.links.filter((_, j) => j !== i),
-                              },
-                            },
-                          }))
-                        }
-                      >
-                        删
-                      </Button>
-                    </div>
-                  ))}
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    type="button"
-                    onClick={() =>
-                      patchDoc((p) => ({
-                        ...p,
-                        sections: {
-                          ...p.sections,
-                          personal: {
-                            ...p.sections.personal,
-                            links: [...p.sections.personal.links, { label: '', url: '' }],
-                          },
-                        },
-                      }))
-                    }
-                  >
-                    添加链接
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="text-sm font-semibold">总结与意向</CardHeader>
-              <CardContent className="space-y-3">
-                <Field label="标题 / 意向一行">
-                  <input
-                    className={lineInputClass()}
-                    value={doc.sections.summary.headline}
-                    onChange={(e) =>
-                      patchDoc((p) => ({
-                        ...p,
-                        sections: {
-                          ...p.sections,
-                          summary: { ...p.sections.summary, headline: e.target.value },
-                        },
-                      }))
-                    }
-                  />
-                </Field>
-                <Field label="正文">
-                  <textarea
-                    className={textAreaClass()}
-                    value={doc.sections.summary.body}
-                    onChange={(e) =>
-                      patchDoc((p) => ({
-                        ...p,
-                        sections: {
-                          ...p.sections,
-                          summary: { ...p.sections.summary, body: e.target.value },
-                        },
-                      }))
-                    }
-                  />
-                </Field>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between">
-                <span className="text-sm font-semibold">工作经历</span>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  type="button"
-                  onClick={() =>
-                    patchDoc((p) => ({
-                      ...p,
-                      sections: {
-                        ...p.sections,
-                        experience: {
-                          entries: [
-                            ...p.sections.experience.entries,
-                            {
-                              id: newEntityId(),
-                              company: '',
-                              role: '',
-                              startDate: '',
-                              endDate: '',
-                              description: '',
-                            },
-                          ],
-                        },
-                      },
-                    }))
-                  }
-                >
-                  添加条目
-                </Button>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                {doc.sections.experience.entries.map((entry, idx) => (
-                  <ExperienceBlock
-                    key={entry.id}
-                    entry={entry}
-                    onChange={(next) =>
-                      patchDoc((p) => {
-                        const entries = [...p.sections.experience.entries]
-                        entries[idx] = next
-                        return {
-                          ...p,
-                          sections: { ...p.sections, experience: { entries } },
-                        }
-                      })
-                    }
-                    onRemove={() =>
-                      patchDoc((p) => ({
-                        ...p,
-                        sections: {
-                          ...p.sections,
-                          experience: {
-                            entries: p.sections.experience.entries.filter((_, j) => j !== idx),
-                          },
-                        },
-                      }))
-                    }
-                  />
-                ))}
-                {doc.sections.experience.entries.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">暂无经历，可点击「添加条目」。</p>
-                ) : null}
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between">
-                <span className="text-sm font-semibold">教育背景</span>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  type="button"
-                  onClick={() =>
-                    patchDoc((p) => ({
-                      ...p,
-                      sections: {
-                        ...p.sections,
-                        education: {
-                          entries: [
-                            ...p.sections.education.entries,
-                            {
-                              id: newEntityId(),
-                              school: '',
-                              degree: '',
-                              field: '',
-                              startDate: '',
-                              endDate: '',
-                              description: '',
-                            },
-                          ],
-                        },
-                      },
-                    }))
-                  }
-                >
-                  添加条目
-                </Button>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                {doc.sections.education.entries.map((entry, idx) => (
-                  <EducationBlock
-                    key={entry.id}
-                    entry={entry}
-                    onChange={(next) =>
-                      patchDoc((p) => {
-                        const entries = [...p.sections.education.entries]
-                        entries[idx] = next
-                        return {
-                          ...p,
-                          sections: { ...p.sections, education: { entries } },
-                        }
-                      })
-                    }
-                    onRemove={() =>
-                      patchDoc((p) => ({
-                        ...p,
-                        sections: {
-                          ...p.sections,
-                          education: {
-                            entries: p.sections.education.entries.filter((_, j) => j !== idx),
-                          },
-                        },
-                      }))
-                    }
-                  />
-                ))}
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="text-sm font-semibold">技能（每行一项）</CardHeader>
-              <CardContent>
-                <textarea
-                  className={textAreaClass()}
-                  rows={6}
-                  value={doc.sections.skills.text}
-                  onChange={(e) =>
-                    patchDoc((p) => ({
-                      ...p,
-                      sections: { ...p.sections, skills: { text: e.target.value } },
-                    }))
-                  }
-                />
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between">
-                <span className="text-sm font-semibold">项目经验</span>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  type="button"
-                  onClick={() =>
-                    patchDoc((p) => ({
-                      ...p,
-                      sections: {
-                        ...p.sections,
-                        projects: {
-                          entries: [
-                            ...p.sections.projects.entries,
-                            {
-                              id: newEntityId(),
-                              name: '',
-                              role: '',
-                              techStack: '',
-                              startDate: '',
-                              endDate: '',
-                              description: '',
-                            },
-                          ],
-                        },
-                      },
-                    }))
-                  }
-                >
-                  添加条目
-                </Button>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                {doc.sections.projects.entries.map((entry, idx) => (
-                  <ProjectBlock
-                    key={entry.id}
-                    entry={entry}
-                    onChange={(next) =>
-                      patchDoc((p) => {
-                        const entries = [...p.sections.projects.entries]
-                        entries[idx] = next
-                        return {
-                          ...p,
-                          sections: { ...p.sections, projects: { entries } },
-                        }
-                      })
-                    }
-                    onRemove={() =>
-                      patchDoc((p) => ({
-                        ...p,
-                        sections: {
-                          ...p.sections,
-                          projects: {
-                            entries: p.sections.projects.entries.filter((_, j) => j !== idx),
-                          },
-                        },
-                      }))
-                    }
-                  />
-                ))}
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="text-sm font-semibold">证书与奖项（每行一项）</CardHeader>
-              <CardContent>
-                <textarea
-                  className={textAreaClass()}
-                  rows={4}
-                  value={doc.sections.certificates.text}
-                  onChange={(e) =>
-                    patchDoc((p) => ({
-                      ...p,
-                      sections: { ...p.sections, certificates: { text: e.target.value } },
-                    }))
-                  }
-                />
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="text-sm font-semibold">语言（每行一项）</CardHeader>
-              <CardContent>
-                <textarea
-                  className={textAreaClass()}
-                  rows={4}
-                  value={doc.sections.languages.text}
-                  onChange={(e) =>
-                    patchDoc((p) => ({
-                      ...p,
-                      sections: { ...p.sections, languages: { text: e.target.value } },
-                    }))
-                  }
-                />
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between">
-                <span className="text-sm font-semibold">自定义模块</span>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  type="button"
-                  onClick={() =>
-                    patchDoc((p) => ({
-                      ...p,
-                      sections: {
-                        ...p.sections,
-                        custom: {
-                          blocks: [
-                            ...p.sections.custom.blocks,
-                            { id: newEntityId(), title: '新模块', body: '' },
-                          ],
-                        },
-                      },
-                    }))
-                  }
-                >
-                  添加区块
-                </Button>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                {doc.sections.custom.blocks.map((block, idx) => (
-                  <CustomBlockEditor
-                    key={block.id}
-                    block={block}
-                    onChange={(next) =>
-                      patchDoc((p) => {
-                        const blocks = [...p.sections.custom.blocks]
-                        blocks[idx] = next
-                        return {
-                          ...p,
-                          sections: { ...p.sections, custom: { blocks } },
-                        }
-                      })
-                    }
-                    onRemove={() =>
-                      patchDoc((p) => ({
-                        ...p,
-                        sections: {
-                          ...p.sections,
-                          custom: {
-                            blocks: p.sections.custom.blocks.filter((_, j) => j !== idx),
-                          },
-                        },
-                      }))
-                    }
-                  />
-                ))}
-              </CardContent>
-            </Card>
+            {getSectionOrder(doc).map((key) => (
+              <DraggableSectionCard key={key} sectionKey={key} onReorder={handleSectionReorder}>
+                {sectionCard(key)}
+              </DraggableSectionCard>
+            ))}
           </div>
         </div>
 
         <div className="flex min-h-[45vh] flex-1 flex-col bg-muted/30 lg:min-h-0 lg:w-1/2">
           <div className="shrink-0 border-b border-border px-3 py-2 text-xs font-medium text-muted-foreground">
             实时预览（与导出同源 HTML）
+            {previewPageCount != null ? (
+              <span className="ml-2 font-normal text-muted-foreground">
+                · 按当前纸张/边距估算约 {previewPageCount} 页（仅供参考，实际分页因打印机/PDF 引擎可能略有差异）
+              </span>
+            ) : null}
           </div>
           <iframe
+            ref={previewIframeRef}
             title="preview"
             className="min-h-0 flex-1 w-full border-0 bg-white"
             srcDoc={previewHtml}
+            onLoad={() => {
+              const frame = previewIframeRef.current
+              const body = frame?.contentDocument?.body
+              if (!body) {
+                return
+              }
+              const n = estimatePrintPageCount(body.scrollHeight, pdfMarginMm, pdfPaper)
+              setPreviewPageCount(n)
+            }}
           />
         </div>
       </div>
@@ -907,7 +1088,7 @@ export function ResumeEditorPage({
       </Dialog>
     </div>
   )
-}
+})
 
 function ExperienceBlock({
   entry,

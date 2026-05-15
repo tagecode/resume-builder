@@ -72,6 +72,19 @@ export type SectionVisibilityKey = keyof ResumeSections
 
 export type SectionVisibility = Record<SectionVisibilityKey, boolean>
 
+/** 编辑区 / 预览 / PDF 模块顺序（CE-03） */
+export const DEFAULT_SECTION_ORDER: SectionVisibilityKey[] = [
+  'personal',
+  'summary',
+  'experience',
+  'education',
+  'skills',
+  'projects',
+  'certificates',
+  'languages',
+  'custom',
+]
+
 export interface ResumeDocument {
   schemaVersion: number
   resumeId: string
@@ -79,6 +92,8 @@ export interface ResumeDocument {
   updatedAt: string
   templateId: TemplateId
   visibility: SectionVisibility
+  /** 模块顺序；缺省或无效时按 DEFAULT_SECTION_ORDER */
+  sectionOrder?: SectionVisibilityKey[]
   sections: ResumeSections
 }
 

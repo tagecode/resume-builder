@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Copy, FilePlus, FileText, Pencil, Trash2 } from 'lucide-react'
+import { Copy, Download, FilePlus, FileText, Pencil, Trash2, Upload } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader } from '@/components/ui/card'
@@ -44,6 +44,7 @@ export function ResumeListPage({
   const [renameValue, setRenameValue] = useState('')
 
   const [deleteTarget, setDeleteTarget] = useState<ResumeListItem | null>(null)
+  const [successHint, setSuccessHint] = useState<string | null>(null)
 
   const refresh = useCallback(async () => {
     if (needsElectron()) {
@@ -136,6 +137,38 @@ export function ResumeListPage({
     await refresh()
   }
 
+  async function handleExportBackupAll() {
+    setError(null)
+    setSuccessHint(null)
+    const res = await window.electronAPI!.exportBackupAll()
+    if (res.ok) {
+      setSuccessHint(`已导出 ${res.count} 份简历到：${res.filePath}`)
+      window.setTimeout(() => setSuccessHint(null), 5500)
+      return
+    }
+    if (res.reason === 'error') {
+      setError(res.message)
+    }
+  }
+
+  async function handleImportBackup() {
+    setError(null)
+    setSuccessHint(null)
+    const res = await window.electronAPI!.importBackup()
+    if (res.ok) {
+      await refresh()
+      setSuccessHint(
+        `已导入 ${res.importedCount} 份简历（均为新副本，名称带「· 导入」后缀）`,
+      )
+      window.setTimeout(() => setSuccessHint(null), 6500)
+      return
+    }
+    if ('reason' in res && res.reason === 'cancelled') {
+      return
+    }
+    setError('error' in res ? res.error : '导入失败')
+  }
+
   if (needsElectron()) {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center gap-4 p-8">
@@ -179,6 +212,14 @@ export function ResumeListPage({
               <FileText className="size-4" />
               从示例创建
             </Button>
+            <Button variant="outline" onClick={() => void handleExportBackupAll()}>
+              <Download className="size-4" />
+              导出 JSON 备份
+            </Button>
+            <Button variant="outline" onClick={() => void handleImportBackup()}>
+              <Upload className="size-4" />
+              从 JSON 恢复
+            </Button>
           </div>
         </div>
       </header>
@@ -187,6 +228,12 @@ export function ResumeListPage({
         {error ? (
           <p className="mb-4 rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
             {error}
+          </p>
+        ) : null}
+
+        {successHint ? (
+          <p className="mb-4 rounded-lg border border-emerald-500/35 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-900 dark:text-emerald-100">
+            {successHint}
           </p>
         ) : null}
 

@@ -5,7 +5,10 @@ import { fileURLToPath } from 'node:url'
 import { app, BrowserWindow, dialog, ipcMain } from 'electron'
 import Store from 'electron-store'
 
+import { setupApplicationMenu } from './app-menu'
+import { readBackupFile } from './backup-io'
 import { renderHtmlToPdfBuffer } from './pdf-export'
+import { printHtmlWithDialog } from './print-html'
 import {
   deleteResume,
   getResumesDir,
@@ -13,11 +16,14 @@ import {
   readResume,
   writeResumeAtomic,
 } from './resume-storage'
-import type { ExportPdfPayload, ThemeMode } from '../src/shared/electron'
+import { BACKUP_FORMAT_VERSION, type ResumeBackupFileV1 } from '../src/shared/backup'
+import type { ExportPdfPayload, PrintHtmlResult, ThemeMode } from '../src/shared/electron'
 import type { ResumeDocument } from '../src/shared/resume'
 import {
   cloneResumeForCopy,
+  cloneResumeForImport,
   createResumeDocument,
+  normalizeResumeDocument,
   sampleSections,
   validateResumeName,
 } from '../src/lib/resume-factory.ts'
@@ -35,6 +41,19 @@ function resumesDirPath() {
   return getResumesDir(app.getPath('userData'))
 }
 
+async function loadAllResumeDocuments(): Promise<ResumeDocument[]> {
+  const dir = resumesDirPath()
+  const items = await listResumes(dir)
+  const out: ResumeDocument[] = []
+  for (const it of items) {
+    const d = await readResume(dir, it.resumeId)
+    if (d) {
+      out.push(d)
+    }
+  }
+  return out
+}
+
 function targetWindow(): BrowserWindow | null {
   return BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0] ?? null
 }
@@ -46,7 +65,7 @@ function createMainWindow() {
     minWidth: 1040,
     minHeight: 720,
     title: 'Resume Builder',
-    autoHideMenuBar: true,
+    autoHideMenuBar: false,
     backgroundColor: '#09090b',
     webPreferences: {
       preload: path.join(__dirname, 'preload.mjs'),
@@ -66,6 +85,8 @@ function createMainWindow() {
 }
 
 app.whenReady().then(() => {
+  setupApplicationMenu()
+
   ipcMain.handle('app:get-metadata', () => ({
     name: app.getName(),
     version: app.getVersion(),
@@ -95,10 +116,10 @@ app.whenReady().then(() => {
     if (nameErr) {
       return { ok: false as const, error: nameErr }
     }
-    const normalized: ResumeDocument = {
+    const normalized: ResumeDocument = normalizeResumeDocument({
       ...doc,
       name: doc.name.trim(),
-    }
+    })
     try {
       await writeResumeAtomic(resumesDirPath(), normalized)
       return { ok: true as const }
@@ -159,6 +180,23 @@ app.whenReady().then(() => {
     }
   })
 
+  ipcMain.handle('resume:print-html', async (_e, html: string): Promise<PrintHtmlResult> => {
+    try {
+      await printHtmlWithDialog(html)
+      return { ok: true as const }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '打印失败'
+      const cancelled =
+        /cancel/i.test(message) ||
+        message.includes('取消') ||
+        message.includes('已取消')
+      if (cancelled) {
+        return { ok: false as const, reason: 'cancelled' as const }
+      }
+      return { ok: false as const, reason: 'error' as const, message }
+    }
+  })
+
   ipcMain.handle('resume:export-pdf', async (_e, payload: ExportPdfPayload) => {
     const suggested = payload.suggestedFileName.replace(/[^\w\u4e00-\u9fff\-_. ]+/g, '_') || '简历'
     try {
@@ -181,6 +219,108 @@ app.whenReady().then(() => {
     } catch (err) {
       const message = err instanceof Error ? err.message : '导出失败'
       return { ok: false as const, reason: 'error' as const, message }
+    }
+  })
+
+  ipcMain.handle('backup:export-all', async () => {
+    try {
+      const resumes = await loadAllResumeDocuments()
+      const payload: ResumeBackupFileV1 = {
+        backupFormatVersion: BACKUP_FORMAT_VERSION,
+        appId: 'resume-builder',
+        exportedAt: new Date().toISOString(),
+        resumes,
+      }
+      const win = targetWindow()
+      const dateStr = new Date().toISOString().slice(0, 10)
+      const dialogOptions = {
+        title: '导出 JSON 备份',
+        defaultPath: path.join(app.getPath('documents'), `resume-builder-backup-${dateStr}.json`),
+        filters: [{ name: 'JSON', extensions: ['json'] }],
+      }
+      const { filePath, canceled } = win
+        ? await dialog.showSaveDialog(win, dialogOptions)
+        : await dialog.showSaveDialog(dialogOptions)
+      if (canceled || !filePath) {
+        return { ok: false as const, reason: 'cancelled' as const }
+      }
+      const outPath = filePath.toLowerCase().endsWith('.json') ? filePath : `${filePath}.json`
+      await writeFile(outPath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8')
+      return { ok: true as const, filePath: outPath, count: resumes.length }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '导出失败'
+      return { ok: false as const, reason: 'error' as const, message }
+    }
+  })
+
+  ipcMain.handle('backup:export-one', async (_e, resumeId: string) => {
+    try {
+      const doc = await readResume(resumesDirPath(), resumeId)
+      if (!doc) {
+        return { ok: false as const, reason: 'error' as const, message: '简历不存在' }
+      }
+      const payload: ResumeBackupFileV1 = {
+        backupFormatVersion: BACKUP_FORMAT_VERSION,
+        appId: 'resume-builder',
+        exportedAt: new Date().toISOString(),
+        resumes: [doc],
+      }
+      const win = targetWindow()
+      const safe = doc.name.replace(/[^\w\u4e00-\u9fff\-_. ]+/g, '_') || '简历'
+      const dialogOptions = {
+        title: '导出此简历为 JSON',
+        defaultPath: path.join(app.getPath('documents'), `${safe}.json`),
+        filters: [{ name: 'JSON', extensions: ['json'] }],
+      }
+      const { filePath, canceled } = win
+        ? await dialog.showSaveDialog(win, dialogOptions)
+        : await dialog.showSaveDialog(dialogOptions)
+      if (canceled || !filePath) {
+        return { ok: false as const, reason: 'cancelled' as const }
+      }
+      const outPath = filePath.toLowerCase().endsWith('.json') ? filePath : `${filePath}.json`
+      await writeFile(outPath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8')
+      return { ok: true as const, filePath: outPath, count: 1 }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '导出失败'
+      return { ok: false as const, reason: 'error' as const, message }
+    }
+  })
+
+  ipcMain.handle('backup:import', async () => {
+    try {
+      const win = targetWindow()
+      const dialogOptions = {
+        title: '从 JSON 恢复',
+        filters: [{ name: 'JSON', extensions: ['json'] }],
+        properties: ['openFile' as const],
+      }
+      const { filePaths, canceled } = win
+        ? await dialog.showOpenDialog(win, dialogOptions)
+        : await dialog.showOpenDialog(dialogOptions)
+      if (canceled || !filePaths?.[0]) {
+        return { ok: false as const, reason: 'cancelled' as const }
+      }
+      const parsed = await readBackupFile(filePaths[0])
+      if (!parsed.ok) {
+        return { ok: false as const, error: parsed.error }
+      }
+      const toWrite: ResumeDocument[] = []
+      for (const src of parsed.file.resumes) {
+        const next = cloneResumeForImport(src)
+        const nameErr = validateResumeName(next.name)
+        if (nameErr) {
+          return { ok: false as const, error: `校验未通过：${nameErr}` }
+        }
+        toWrite.push({ ...next, name: next.name.trim() })
+      }
+      for (const doc of toWrite) {
+        await writeResumeAtomic(resumesDirPath(), doc)
+      }
+      return { ok: true as const, importedCount: toWrite.length }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '导入失败'
+      return { ok: false as const, error: message }
     }
   })
 
