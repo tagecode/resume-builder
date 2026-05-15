@@ -90,7 +90,10 @@ export interface ResumeListItem {
 
 export interface PdfExportOptions {
   paperSize: 'A4' | 'Letter'
-  /** 四边统一边距，单位毫米 */
+  /**
+   * 四边统一内容边距（毫米）。实际排版由 `buildResumePrintHtml` 的 body padding 实现，
+   * 以便与预览一致并避免 Chromium printToPDF 自定义边距校验问题。
+   */
   marginMm: number
   /** Chromium scale，约 0.5–2，默认 1 */
   scale: number

@@ -12,7 +12,8 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
-import type { ResumeListItem } from '@/shared/resume'
+import type { ResumeListItem, TemplateId } from '@/shared/resume'
+import { TEMPLATE_OPTIONS } from '@/shared/resume'
 import { validateResumeName } from '@/lib/resume-factory'
 import { ThemeControls } from '@/features/resume/theme-controls'
 import type { ThemeMode } from '@/shared/electron'
@@ -36,6 +37,7 @@ export function ResumeListPage({
 
   const [createOpen, setCreateOpen] = useState(false)
   const [createMode, setCreateMode] = useState<'blank' | 'sample'>('blank')
+  const [createTemplateId, setCreateTemplateId] = useState<TemplateId>('classic')
   const [newName, setNewName] = useState('我的简历')
 
   const [renameTarget, setRenameTarget] = useState<ResumeListItem | null>(null)
@@ -71,7 +73,11 @@ export function ResumeListPage({
       setError(err)
       return
     }
-    const res = await window.electronAPI!.createResume({ mode: createMode, name: newName.trim() })
+    const res = await window.electronAPI!.createResume({
+      mode: createMode,
+      name: newName.trim(),
+      templateId: createTemplateId,
+    })
     if (!res.ok) {
       setError(res.error)
       return
@@ -155,6 +161,7 @@ export function ResumeListPage({
             <Button
               onClick={() => {
                 setCreateMode('blank')
+                setCreateTemplateId('classic')
                 setCreateOpen(true)
               }}
             >
@@ -165,6 +172,7 @@ export function ResumeListPage({
               variant="secondary"
               onClick={() => {
                 setCreateMode('sample')
+                setCreateTemplateId('classic')
                 setCreateOpen(true)
               }}
             >
@@ -250,6 +258,20 @@ export function ResumeListPage({
             <DialogDescription>为简历起一个名称，便于在列表中识别。</DialogDescription>
           </DialogHeader>
           <Input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="简历名称" />
+          <div className="space-y-1.5">
+            <span className="text-xs font-medium text-muted-foreground">初始模板</span>
+            <select
+              className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+              value={createTemplateId}
+              onChange={(e) => setCreateTemplateId(e.target.value as TemplateId)}
+            >
+              {TEMPLATE_OPTIONS.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.label}
+                </option>
+              ))}
+            </select>
+          </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setCreateOpen(false)}>
               取消

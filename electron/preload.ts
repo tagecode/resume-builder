@@ -6,7 +6,7 @@ import type {
   ResumeCreateMode,
   ThemeMode,
 } from '../src/shared/electron'
-import type { ResumeDocument } from '../src/shared/resume'
+import type { ResumeDocument, TemplateId } from '../src/shared/resume'
 
 const electronApi: ElectronApi = {
   getAppMetadata: () => ipcRenderer.invoke('app:get-metadata'),
@@ -16,7 +16,7 @@ const electronApi: ElectronApi = {
   readResume: (resumeId: string) => ipcRenderer.invoke('resume:read', resumeId),
   saveResume: (doc: ResumeDocument) => ipcRenderer.invoke('resume:save', doc),
   deleteResume: (resumeId: string) => ipcRenderer.invoke('resume:delete', resumeId),
-  createResume: (payload: { mode: ResumeCreateMode; name: string }) =>
+  createResume: (payload: { mode: ResumeCreateMode; name: string; templateId?: TemplateId }) =>
     ipcRenderer.invoke('resume:create', payload),
   duplicateResume: (resumeId: string) => ipcRenderer.invoke('resume:duplicate', resumeId),
   exportResumePdf: (payload: ExportPdfPayload) =>

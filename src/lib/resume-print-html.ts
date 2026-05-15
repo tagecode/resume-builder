@@ -145,12 +145,13 @@ function renderBody(resume: ResumeDocument): string {
   return parts.join('\n')
 }
 
-function stylesForTemplate(id: TemplateId): string {
+function stylesForTemplate(id: TemplateId, pageMarginMm: number): string {
+  const pad = Math.max(0, pageMarginMm)
   const base = `
     * { box-sizing: border-box; }
     body {
       margin: 0;
-      padding: 12mm 14mm;
+      padding: ${pad}mm;
       color: #111;
       background: #fff;
       -webkit-print-color-adjust: exact;
@@ -228,12 +229,18 @@ function stylesForTemplate(id: TemplateId): string {
   )
 }
 
+export interface ResumePrintHtmlOptions {
+  /** 内容与纸张边缘的留白（毫米），与编辑器「边距」滑块一致 */
+  pageMarginMm?: number
+}
+
 /**
  * 完整 HTML 文档，供预览 iframe 与 printToPDF 使用（同一来源保证一致）。
  */
-export function buildResumePrintHtml(resume: ResumeDocument): string {
+export function buildResumePrintHtml(resume: ResumeDocument, opts?: ResumePrintHtmlOptions): string {
+  const pageMarginMm = opts?.pageMarginMm ?? 14
   const body = renderBody(resume)
-  const css = stylesForTemplate(resume.templateId)
+  const css = stylesForTemplate(resume.templateId, pageMarginMm)
   return `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>

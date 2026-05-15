@@ -91,8 +91,16 @@ app.whenReady().then(() => {
   })
 
   ipcMain.handle('resume:save', async (_e, doc: ResumeDocument) => {
+    const nameErr = validateResumeName(doc.name)
+    if (nameErr) {
+      return { ok: false as const, error: nameErr }
+    }
+    const normalized: ResumeDocument = {
+      ...doc,
+      name: doc.name.trim(),
+    }
     try {
-      await writeResumeAtomic(resumesDirPath(), doc)
+      await writeResumeAtomic(resumesDirPath(), normalized)
       return { ok: true as const }
     } catch (err) {
       const message = err instanceof Error ? err.message : '保存失败'
@@ -112,13 +120,20 @@ app.whenReady().then(() => {
 
   ipcMain.handle(
     'resume:create',
-    async (_e, payload: { mode: 'blank' | 'sample'; name: string }) => {
+    async (
+      _e,
+      payload: { mode: 'blank' | 'sample'; name: string; templateId?: ResumeDocument['templateId'] },
+    ) => {
       const nameErr = validateResumeName(payload.name)
       if (nameErr) {
         return { ok: false as const, error: nameErr }
       }
       const sections = payload.mode === 'sample' ? sampleSections() : undefined
-      const doc = createResumeDocument({ name: payload.name.trim(), sections })
+      const doc = createResumeDocument({
+        name: payload.name.trim(),
+        sections,
+        templateId: payload.templateId,
+      })
       try {
         await writeResumeAtomic(resumesDirPath(), doc)
         return { ok: true as const, document: doc }
@@ -159,9 +174,10 @@ app.whenReady().then(() => {
       if (canceled || !filePath) {
         return { ok: false as const, reason: 'cancelled' as const }
       }
+      const outPath = filePath.toLowerCase().endsWith('.pdf') ? filePath : `${filePath}.pdf`
       const buf = await renderHtmlToPdfBuffer(payload.html, payload.options)
-      await writeFile(filePath, buf)
-      return { ok: true as const, filePath }
+      await writeFile(outPath, buf)
+      return { ok: true as const, filePath: outPath }
     } catch (err) {
       const message = err instanceof Error ? err.message : '导出失败'
       return { ok: false as const, reason: 'error' as const, message }

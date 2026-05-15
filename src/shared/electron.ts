@@ -1,4 +1,4 @@
-import type { PdfExportOptions, ResumeDocument, ResumeListItem } from './resume'
+import type { PdfExportOptions, ResumeDocument, ResumeListItem, TemplateId } from './resume'
 
 export type ThemeMode = 'system' | 'light' | 'dark'
 
@@ -36,6 +36,7 @@ export interface ElectronApi {
   createResume: (payload: {
     mode: ResumeCreateMode
     name: string
+    templateId?: TemplateId
   }) => Promise<{ ok: true; document: ResumeDocument } | { ok: false; error: string }>
   duplicateResume: (
     resumeId: string,

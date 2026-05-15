@@ -13,7 +13,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { buildResumePrintHtml } from '@/lib/resume-print-html'
-import { newEntityId } from '@/lib/resume-factory'
+import { newEntityId, validateResumeName } from '@/lib/resume-factory'
 import type {
   CustomBlock,
   EducationEntry,
@@ -94,7 +94,10 @@ export function ResumeEditorPage({
   const serialized = useMemo(() => (doc ? JSON.stringify(doc) : ''), [doc])
   const isDirty = doc ? serialized !== savedSnapshot : false
 
-  const previewHtml = useMemo(() => (doc ? buildResumePrintHtml(doc) : ''), [doc])
+  const previewHtml = useMemo(
+    () => (doc ? buildResumePrintHtml(doc, { pageMarginMm: pdfMarginMm }) : ''),
+    [doc, pdfMarginMm],
+  )
 
   const persist = useCallback(async (explicit?: ResumeDocument): Promise<boolean> => {
     if (!window.electronAPI) {
@@ -104,7 +107,13 @@ export function ResumeEditorPage({
     if (!base) {
       return false
     }
-    const toSave = { ...base, updatedAt: new Date().toISOString() }
+    const nameErr = validateResumeName(base.name)
+    if (nameErr) {
+      setSaveHint(nameErr)
+      window.setTimeout(() => setSaveHint(null), 4500)
+      return false
+    }
+    const toSave = { ...base, name: base.name.trim(), updatedAt: new Date().toISOString() }
     const res = await window.electronAPI.saveResume(toSave)
     if (res.ok) {
       setDoc(toSave)
@@ -159,6 +168,18 @@ export function ResumeEditorPage({
     return () => window.removeEventListener('keydown', onKey)
   }, [persist])
 
+  useEffect(() => {
+    if (!isDirty) {
+      return
+    }
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault()
+      e.returnValue = ''
+    }
+    window.addEventListener('beforeunload', onBeforeUnload)
+    return () => window.removeEventListener('beforeunload', onBeforeUnload)
+  }, [isDirty])
+
   function tryBack() {
     if (isDirty) {
       setUnsavedOpen(true)
@@ -193,7 +214,7 @@ export function ResumeEditorPage({
     if (!d) {
       return
     }
-    const html = buildResumePrintHtml(d)
+    const html = buildResumePrintHtml(d, { pageMarginMm: pdfMarginMm })
     const options: PdfExportOptions = {
       paperSize: pdfPaper,
       marginMm: pdfMarginMm,

@@ -3,7 +3,8 @@
 | 属性 | 内容 |
 |------|------|
 | 产品名称 | Resume Builder（个人简历制作器，一款跨平台的桌面应用） |
-| 文档版本 | 1.0 |
+| 文档版本 | 1.1 |
+| 基线修订 | 2026-05-16（§10 实现基线与 MVP 验收记录） |
 | 基线说明 | 与 `docs/feature.md` 功能清单一致；实现状态以本文 **§10 当前实现基线** 为准 |
 | 技术栈 | Electron、Vite、React、TypeScript、Tailwind CSS v4、shadcn/ui、electron-store |
 
@@ -222,17 +223,34 @@
 
 ---
 
-## 10. 当前实现基线（截至文档编写时）
+## 10. 当前实现基线（2026-05-16）
 
-> 用于需求与实现的差距分析；随开发更新本小节或改为链接到 CHANGELOG。
+> 用于需求与实现的差距分析；随开发更新本小节。
+
+### 10.1 MVP 验收（对应 `docs/mvp.md` §6）
+
+| 项目 | 状态 | 说明 |
+|------|------|------|
+| 辅助检查 `pnpm run build && pnpm run verify:mvp` | **已通过** | 2026-05-16 在本仓库执行成功；覆盖 UTF-8、模块显隐与同源 HTML、三套模板 CSS 差异等（**不能**替代 PDF 实机阅读） |
+| §6 步骤 1–6（离线 GUI：列表→编辑→显隐→模板→保存→切换简历） | **须在桌面端人工确认** | 须使用 `pnpm dev` 启动 **Electron**（非仅 Web）；Web 预览路径无 `window.electronAPI`，无法完成持久化闭环 |
+| §6 步骤 7（导出 PDF 后用系统阅读器核对中文与版式） | **须在桌面端人工确认** | 自动化脚本不替代实机打开 PDF |
+
+### 10.2 能力与实现对照
 
 | 能力 | 状态 | 说明 |
 |------|------|------|
 | Electron 壳层 / 单主窗口 | 已具备 | `electron/main.ts` |
-| Preload / IPC 隔离 | 已具备 | `electron/preload.ts`；仅应用信息与主题 |
+| Preload / `contextIsolation` | 已具备 | `electron/preload.ts`（构建产出 `dist-electron/preload.mjs`）：应用元数据、主题、`resume:*`（列表/读/写/删/新建/复制）、`exportResumePdf` |
 | 主题持久化（system/light/dark） | 已具备 | `electron-store` 存 `theme` |
-| 渲染侧 shell | 已具备 | `AppShell` 展示技术栈与主题切换，**非简历业务 UI** |
-| 简历项目 / 编辑 / 预览 / 模板 / 导出 | **未实现** | 需按 §6 与 MVP 规划开发 |
+| 渲染入口 | 已具备 | `src/App.tsx` → `ResumeApp`（`src/features/resume/resume-app.tsx`） |
+| 简历 JSON 持久化（DS-01 / MVP §4） | 已具备 | `{userData}/resumes/{resumeId}.json` 原子写入（`electron/resume-storage.ts`） |
+| 列表与项目（PM-01/02/04/05） | 已具备 | `resume-list-page.tsx`：新建空白/示例、初始模板选择、重命名、复制、删除确认；编辑器内防抖保存、Cmd/Ctrl+S、未保存返回列表时保存/放弃/取消；主进程保存时简历名校验 |
+| 分区编辑与显隐（CE-01/04） | 已具备 | `resume-editor-page.tsx`：P0 所列分区与动态条目；隐藏模块不出现在预览与 PDF 同源 HTML（`resume-print-html.ts`） |
+| 实时预览（PV-01） | 已具备 | 分栏：左侧表单、右侧 iframe 同源 HTML |
+| 内置模板（TS-01/02） | 已具备 | classic / modern / minimal 三套；切换不丢字段（统一 `sections` 模型） |
+| 导出 PDF（IO-01） | 已具备 | A4/Letter、边距（由 HTML `body` padding 与编辑器滑块一致）、`scale`；Chromium `printToPDF`，PDF 级边距为 `none` 以避免与 HTML 双重留白及边距校验问题 |
+| `AppShell` 组件 | 未接入主流程 | `src/components/app-shell.tsx` 仍存在于仓库，**未**作为当前 `App` 根组件使用 |
+| MVP §5 明确不包含项 | 未实现 | 如列表搜索/排序（PM-03）、富文本（CE-02）、JSON 备份（IO-06）、系统打印（IO-03）、原生菜单（DT-05）等，按 §9 归入 V1.1 及以后 |
 
 ---
 
