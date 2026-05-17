@@ -108,7 +108,11 @@ export function ResumeApp() {
             void editorRef.current?.exportPdf()
           }
           break
-        default:
+        case 'export-image':
+          if (view === 'editor') {
+            void editorRef.current?.exportImage()
+          }
+          break
           break
       }
     })

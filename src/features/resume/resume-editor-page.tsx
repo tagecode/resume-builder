@@ -13,14 +13,23 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { buildResumePrintHtml, estimatePrintPageCount } from '@/lib/resume-print-html'
-import { getSectionOrder, newEntityId, reorderSectionKeys, validateResumeName } from '@/lib/resume-factory'
+import {
+  getSectionOrder,
+  mergeGlobalStyle,
+  newEntityId,
+  reorderSectionKeys,
+  validateResumeName,
+} from '@/lib/resume-factory'
 import type {
   CustomBlock,
   EducationEntry,
   ExperienceEntry,
+  ExportImageOptions,
   PdfExportOptions,
   ProjectEntry,
+  ResumeBodyFont,
   ResumeDocument,
+  ResumeLayoutDensity,
   SectionVisibilityKey,
   TemplateId,
 } from '@/shared/resume'
@@ -47,6 +56,7 @@ export type ResumeEditorHandle = {
   save: () => Promise<boolean>
   print: () => Promise<void>
   exportPdf: () => void
+  exportImage: () => void
   backToList: () => void
   exportBackupOne: () => void
 }
@@ -140,12 +150,18 @@ ref) {
   const [savedSnapshot, setSavedSnapshot] = useState('')
   const [saveHint, setSaveHint] = useState<string | null>(null)
   const [exporting, setExporting] = useState(false)
+  const [exportingImage, setExportingImage] = useState(false)
+  const [exportImageFormat, setExportImageFormat] = useState<ExportImageOptions['format']>('png')
+  const [exportImagePr, setExportImagePr] = useState(2)
 
   const [pdfPaper, setPdfPaper] = useState<'A4' | 'Letter'>('A4')
   const [pdfMarginMm, setPdfMarginMm] = useState(14)
   const [pdfScale, setPdfScale] = useState(1)
 
   const [unsavedOpen, setUnsavedOpen] = useState(false)
+  const [draftPrompt, setDraftPrompt] = useState<{ disk: ResumeDocument; draft: ResumeDocument } | null>(
+    null,
+  )
   const [previewPageCount, setPreviewPageCount] = useState<number | null>(null)
   const previewIframeRef = useRef<HTMLIFrameElement>(null)
 
@@ -194,7 +210,9 @@ ref) {
   useEffect(() => {
     let alive = true
     async function load() {
+      setDraftPrompt(null)
       setLoadError(null)
+      void window.electronAPI!.touchRecentResume(resumeId)
       const d = await window.electronAPI!.readResume(resumeId)
       if (!alive) {
         return
@@ -202,6 +220,13 @@ ref) {
       if (!d) {
         setLoadError('找不到该简历')
         return
+      }
+      const draft = await window.electronAPI!.readResumeDraft(resumeId)
+      if (!alive) {
+        return
+      }
+      if (draft && draft.updatedAt > d.updatedAt) {
+        setDraftPrompt({ disk: d, draft })
       }
       setDoc(d)
       setSavedSnapshot(JSON.stringify(d))
@@ -221,6 +246,16 @@ ref) {
     }, 1500)
     return () => window.clearTimeout(t)
   }, [serialized, isDirty, persist, doc])
+
+  useEffect(() => {
+    if (!doc) {
+      return
+    }
+    const t = window.setTimeout(() => {
+      void window.electronAPI!.writeResumeDraft(doc)
+    }, 2000)
+    return () => window.clearTimeout(t)
+  }, [serialized, doc])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -326,14 +361,47 @@ ref) {
     }
   }
 
+  async function handleExportImage() {
+    const d = docRef.current
+    if (!d) {
+      return
+    }
+    const html = buildResumePrintHtml(d, { pageMarginMm: pdfMarginMm })
+    setExportingImage(true)
+    try {
+      const res = await window.electronAPI!.exportResumeImage({
+        html,
+        options: { format: exportImageFormat, pixelRatio: exportImagePr },
+        suggestedFileName: d.name,
+      })
+      if (res.ok) {
+        setSaveHint(`已导出长图：${res.filePath}`)
+        window.setTimeout(() => setSaveHint(null), 4000)
+      } else if (res.reason === 'error') {
+        setSaveHint(res.message)
+        window.setTimeout(() => setSaveHint(null), 4000)
+      }
+    } finally {
+      setExportingImage(false)
+    }
+  }
+
   const editorApiRef = useRef({
     persist,
     tryBack,
     handleExportPdf,
+    handleExportImage,
     handleExportBackupOne,
     pdfMarginMm,
   })
-  editorApiRef.current = { persist, tryBack, handleExportPdf, handleExportBackupOne, pdfMarginMm }
+  editorApiRef.current = {
+    persist,
+    tryBack,
+    handleExportPdf,
+    handleExportImage,
+    handleExportBackupOne,
+    pdfMarginMm,
+  }
 
   useImperativeHandle(
     ref,
@@ -356,6 +424,7 @@ ref) {
         }
       },
       exportPdf: () => void editorApiRef.current.handleExportPdf(),
+      exportImage: () => void editorApiRef.current.handleExportImage(),
       backToList: () => editorApiRef.current.tryBack(),
       exportBackupOne: () => void editorApiRef.current.handleExportBackupOne(),
     }),
@@ -995,7 +1064,120 @@ ref) {
             </Card>
 
             <Card>
-              <CardHeader className="text-sm font-semibold">导出 PDF</CardHeader>
+              <CardHeader className="text-sm font-semibold">全局样式（TS-03）</CardHeader>
+              <CardContent className="space-y-3">
+                <Field label={`正文字号缩放（×${mergeGlobalStyle(doc.globalStyle).fontScale.toFixed(2)}）`}>
+                  <input
+                    type="range"
+                    min={0.85}
+                    max={1.25}
+                    step={0.05}
+                    value={mergeGlobalStyle(doc.globalStyle).fontScale}
+                    onChange={(e) =>
+                      patchDoc((p) => ({
+                        ...p,
+                        globalStyle: mergeGlobalStyle({
+                          ...p.globalStyle,
+                          fontScale: Number(e.target.value),
+                        }),
+                      }))
+                    }
+                    className="w-full"
+                  />
+                </Field>
+                <Field label={`行高倍率（×${mergeGlobalStyle(doc.globalStyle).lineHeight.toFixed(2)}）`}>
+                  <input
+                    type="range"
+                    min={0.85}
+                    max={1.2}
+                    step={0.05}
+                    value={mergeGlobalStyle(doc.globalStyle).lineHeight}
+                    onChange={(e) =>
+                      patchDoc((p) => ({
+                        ...p,
+                        globalStyle: mergeGlobalStyle({
+                          ...p.globalStyle,
+                          lineHeight: Number(e.target.value),
+                        }),
+                      }))
+                    }
+                    className="w-full"
+                  />
+                </Field>
+                <Field label="正文字体">
+                  <select
+                    className={lineInputClass()}
+                    value={mergeGlobalStyle(doc.globalStyle).bodyFont}
+                    onChange={(e) =>
+                      patchDoc((p) => ({
+                        ...p,
+                        globalStyle: mergeGlobalStyle({
+                          ...p.globalStyle,
+                          bodyFont: e.target.value as ResumeBodyFont,
+                        }),
+                      }))
+                    }
+                  >
+                    <option value="template">跟随模板</option>
+                    <option value="serif">衬线（思源宋体风格栈）</option>
+                    <option value="sans">无衬线（系统 UI + 黑体栈）</option>
+                    <option value="mono">等宽</option>
+                  </select>
+                </Field>
+                <Field label="排版密度">
+                  <select
+                    className={lineInputClass()}
+                    value={mergeGlobalStyle(doc.globalStyle).density}
+                    onChange={(e) =>
+                      patchDoc((p) => ({
+                        ...p,
+                        globalStyle: mergeGlobalStyle({
+                          ...p.globalStyle,
+                          density: e.target.value as ResumeLayoutDensity,
+                        }),
+                      }))
+                    }
+                  >
+                    <option value="compact">紧凑</option>
+                    <option value="normal">标准</option>
+                    <option value="relaxed">宽松</option>
+                  </select>
+                </Field>
+                <Field label="主题强调色（留空则用模板默认；#RRGGBB）">
+                  <div className="flex gap-2">
+                    <input
+                      className={lineInputClass()}
+                      placeholder="#2563eb"
+                      value={mergeGlobalStyle(doc.globalStyle).accentColor}
+                      onChange={(e) =>
+                        patchDoc((p) => ({
+                          ...p,
+                          globalStyle: mergeGlobalStyle({
+                            ...p.globalStyle,
+                            accentColor: e.target.value.trim(),
+                          }),
+                        }))
+                      }
+                    />
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() =>
+                        patchDoc((p) => ({
+                          ...p,
+                          globalStyle: mergeGlobalStyle({ ...p.globalStyle, accentColor: '' }),
+                        }))
+                      }
+                    >
+                      清空
+                    </Button>
+                  </div>
+                </Field>
+              </CardContent>
+            </Card>
+
+            <Card>
               <CardContent className="space-y-3">
                 <Field label="纸张">
                   <select
@@ -1034,6 +1216,39 @@ ref) {
               </CardContent>
             </Card>
 
+            <Card>
+              <CardHeader className="text-sm font-semibold">导出长图（IO-02）</CardHeader>
+              <CardContent className="space-y-3">
+                <p className="text-xs text-muted-foreground">
+                  截取与预览同源的整页长图（内容过长时高度较大）。清晰度倍率越高文件越大。
+                </p>
+                <Field label="格式">
+                  <select
+                    className={lineInputClass()}
+                    value={exportImageFormat}
+                    onChange={(e) => setExportImageFormat(e.target.value as ExportImageOptions['format'])}
+                  >
+                    <option value="png">PNG</option>
+                    <option value="jpeg">JPEG</option>
+                  </select>
+                </Field>
+                <Field label={`清晰度倍率：${exportImagePr}x`}>
+                  <input
+                    type="range"
+                    min={1}
+                    max={3}
+                    step={0.5}
+                    value={exportImagePr}
+                    onChange={(e) => setExportImagePr(Number(e.target.value))}
+                    className="w-full"
+                  />
+                </Field>
+                <Button disabled={exportingImage} onClick={() => void handleExportImage()}>
+                  {exportingImage ? '导出中…' : '导出长图…'}
+                </Button>
+              </CardContent>
+            </Card>
+
             {getSectionOrder(doc).map((key) => (
               <DraggableSectionCard key={key} sectionKey={key} onReorder={handleSectionReorder}>
                 {sectionCard(key)}
@@ -1068,6 +1283,43 @@ ref) {
           />
         </div>
       </div>
+
+      <Dialog open={draftPrompt !== null} onOpenChange={() => {}}>
+        <DialogContent showCloseButton={false}>
+          <DialogHeader>
+            <DialogTitle>发现自动保存草稿</DialogTitle>
+            <DialogDescription>
+              本地有一份自动保存草稿，时间戳晚于磁盘上当前版本。可用草稿恢复未写入的编辑内容；若使用已保存版本将丢弃该草稿。
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:justify-stretch">
+            <Button
+              variant="outline"
+              onClick={() => {
+                if (!draftPrompt) {
+                  return
+                }
+                void window.electronAPI!.clearResumeDraft(resumeId)
+                setDraftPrompt(null)
+              }}
+            >
+              使用已保存版本
+            </Button>
+            <Button
+              onClick={() => {
+                if (!draftPrompt) {
+                  return
+                }
+                setDoc(draftPrompt.draft)
+                setSavedSnapshot(JSON.stringify(draftPrompt.disk))
+                setDraftPrompt(null)
+              }}
+            >
+              恢复草稿
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={unsavedOpen} onOpenChange={setUnsavedOpen}>
         <DialogContent showCloseButton={false}>

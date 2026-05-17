@@ -45,18 +45,28 @@ export function ResumeListPage({
 
   const [deleteTarget, setDeleteTarget] = useState<ResumeListItem | null>(null)
   const [successHint, setSuccessHint] = useState<string | null>(null)
+  const [recentItems, setRecentItems] = useState<ResumeListItem[]>([])
+  const [draftNewerIds, setDraftNewerIds] = useState<Set<string>>(() => new Set())
 
   const refresh = useCallback(async () => {
     if (needsElectron()) {
       setItems([])
+      setRecentItems([])
+      setDraftNewerIds(new Set())
       setLoading(false)
       return
     }
     setLoading(true)
     setError(null)
     try {
-      const list = await window.electronAPI!.listResumes()
+      const [list, recent, draftMeta] = await Promise.all([
+        window.electronAPI!.listResumes(),
+        window.electronAPI!.listRecentResumes(),
+        window.electronAPI!.listDraftsNewerThanDisk(),
+      ])
       setItems(list)
+      setRecentItems(recent)
+      setDraftNewerIds(new Set(draftMeta.map((d) => d.resumeId)))
     } catch (e) {
       setError(e instanceof Error ? e.message : '加载列表失败')
     } finally {
@@ -237,6 +247,27 @@ export function ResumeListPage({
           </p>
         ) : null}
 
+        {!loading && recentItems.length > 0 ? (
+          <Card className="mb-6">
+            <CardHeader className="py-3 text-sm font-semibold">最近打开</CardHeader>
+            <CardContent className="flex flex-wrap gap-2 pt-0">
+              {recentItems.map((item) => (
+                <Button
+                  key={item.resumeId}
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => onOpenResume(item.resumeId)}
+                >
+                  <span className="max-w-[200px] truncate">{item.name}</span>
+                  {draftNewerIds.has(item.resumeId) ? (
+                    <span className="ml-1 text-xs text-amber-600 dark:text-amber-400">·草稿</span>
+                  ) : null}
+                </Button>
+              ))}
+            </CardContent>
+          </Card>
+        ) : null}
+
         {loading ? (
           <p className="text-muted-foreground">加载中…</p>
         ) : items.length === 0 ? (
@@ -257,7 +288,14 @@ export function ResumeListPage({
                       className="min-w-0 flex-1 text-left"
                       onClick={() => onOpenResume(item.resumeId)}
                     >
-                      <p className="truncate font-medium">{item.name}</p>
+                      <p className="truncate font-medium">
+                        {item.name}
+                        {draftNewerIds.has(item.resumeId) ? (
+                          <span className="ml-2 text-xs font-normal text-amber-600 dark:text-amber-400">
+                            （有未存盘草稿）
+                          </span>
+                        ) : null}
+                      </p>
                       <p className="text-xs text-muted-foreground">
                         更新 {new Date(item.updatedAt).toLocaleString()}
                       </p>

@@ -46,6 +46,7 @@ export function setupApplicationMenu(): void {
           accelerator: 'CmdOrCtrl+Shift+E',
           click: () => broadcastMenuAction('export-pdf'),
         },
+        { label: '导出长图（PNG/JPEG）…', click: () => broadcastMenuAction('export-image') },
         { type: 'separator' },
         { label: '导出 JSON 备份…', click: () => broadcastMenuAction('export-backup') },
         { label: '从 JSON 恢复…', click: () => broadcastMenuAction('import-backup') },

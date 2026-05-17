@@ -1,4 +1,10 @@
-import type { PdfExportOptions, ResumeDocument, ResumeListItem, TemplateId } from './resume'
+import type {
+  ExportImageOptions,
+  PdfExportOptions,
+  ResumeDocument,
+  ResumeListItem,
+  TemplateId,
+} from './resume'
 
 export type ThemeMode = 'system' | 'light' | 'dark'
 
@@ -20,12 +26,19 @@ export interface ExportPdfPayload {
   suggestedFileName: string
 }
 
+export interface ExportImagePayload {
+  html: string
+  options: ExportImageOptions
+  suggestedFileName: string
+}
+
 /** 主进程菜单向渲染进程广播的动作（DT-05 / EF-04） */
 export type MenuAction =
   | 'back-to-list'
   | 'save'
   | 'print'
   | 'export-pdf'
+  | 'export-image'
   | 'export-backup'
   | 'import-backup'
   | 'shortcuts-help'
@@ -35,6 +48,11 @@ export type PrintHtmlResult =
   | { ok: false; reason: 'cancelled' | 'error'; message?: string }
 
 export type ExportPdfResult =
+  | { ok: true; filePath: string }
+  | { ok: false; reason: 'cancelled' }
+  | { ok: false; reason: 'error'; message: string }
+
+export type ExportImageResult =
   | { ok: true; filePath: string }
   | { ok: false; reason: 'cancelled' }
   | { ok: false; reason: 'error'; message: string }
@@ -66,6 +84,7 @@ export interface ElectronApi {
     resumeId: string,
   ) => Promise<{ ok: true; document: ResumeDocument } | { ok: false; error: string }>
   exportResumePdf: (payload: ExportPdfPayload) => Promise<ExportPdfResult>
+  exportResumeImage: (payload: ExportImagePayload) => Promise<ExportImageResult>
   exportBackupAll: () => Promise<BackupExportResult>
   exportBackupOne: (resumeId: string) => Promise<BackupExportResult>
   importBackup: () => Promise<BackupImportResult>
@@ -73,4 +92,12 @@ export interface ElectronApi {
   onMenuAction: (listener: (action: MenuAction) => void) => () => void
   /** 系统打印对话框（IO-03），HTML 与预览/PDF 同源 */
   printResumeHtml: (html: string) => Promise<PrintHtmlResult>
+  writeResumeDraft: (doc: ResumeDocument) => Promise<void>
+  readResumeDraft: (resumeId: string) => Promise<ResumeDocument | null>
+  clearResumeDraft: (resumeId: string) => Promise<void>
+  listDraftsNewerThanDisk: () => Promise<
+    Array<{ resumeId: string; draftUpdatedAt: string; diskUpdatedAt: string }>
+  >
+  listRecentResumes: () => Promise<ResumeListItem[]>
+  touchRecentResume: (resumeId: string) => Promise<void>
 }

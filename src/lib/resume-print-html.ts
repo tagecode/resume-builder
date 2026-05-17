@@ -1,6 +1,6 @@
-import { getSectionOrder } from '@/lib/resume-factory'
+import { getSectionOrder, mergeGlobalStyle } from '@/lib/resume-factory'
 import { richTextToSafeHtml } from '@/lib/rich-text-lite'
-import type { ResumeDocument, SectionVisibilityKey, TemplateId } from '@/shared/resume'
+import type { ResumeDocument, ResumeGlobalStyle, SectionVisibilityKey, TemplateId } from '@/shared/resume'
 
 function esc(s: string): string {
   return s
@@ -159,7 +159,66 @@ function renderBody(resume: ResumeDocument): string {
   return chunks.join('\n')
 }
 
-function stylesForTemplate(id: TemplateId, pageMarginMm: number): string {
+function templateTypography(id: TemplateId): { basePt: number; lh: number } {
+  if (id === 'classic') {
+    return { basePt: 11, lh: 1.45 }
+  }
+  if (id === 'modern') {
+    return { basePt: 10.5, lh: 1.5 }
+  }
+  return { basePt: 10.5, lh: 1.6 }
+}
+
+function resolveGlobalStyle(resume: ResumeDocument): ResumeGlobalStyle {
+  return mergeGlobalStyle(resume.globalStyle)
+}
+
+function globalStyleCss(id: TemplateId, gs: ResumeGlobalStyle): string {
+  const { basePt, lh } = templateTypography(id)
+  const fontPt = (basePt * gs.fontScale).toFixed(2)
+  const lineHeight = (lh * gs.lineHeight).toFixed(3)
+  const density =
+    gs.density === 'compact'
+      ? { blockY: 10, itemMb: 7 }
+      : gs.density === 'relaxed'
+        ? { blockY: 16, itemMb: 13 }
+        : { blockY: 13, itemMb: 10 }
+
+  const fontStack =
+    gs.bodyFont === 'serif'
+      ? `font-family: Georgia, 'Times New Roman', 'Songti SC', 'SimSun', serif !important;`
+      : gs.bodyFont === 'sans'
+        ? `font-family: system-ui, -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif !important;`
+        : gs.bodyFont === 'mono'
+          ? `font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace !important;`
+          : ''
+
+  const accent =
+    gs.accentColor && /^#[0-9A-Fa-f]{6}$/.test(gs.accentColor)
+      ? `
+    a, .rich-text a { color: ${gs.accentColor} !important; }
+    .personal { border-left-color: ${gs.accentColor} !important; }
+    .title-line { color: ${gs.accentColor} !important; }
+    h2 { border-bottom-color: ${gs.accentColor} !important; }
+    `
+      : ''
+
+  return `
+    body {
+      font-size: ${fontPt}pt !important;
+      line-height: ${lineHeight} !important;
+      ${fontStack}
+    }
+    h2 {
+      margin: ${density.blockY}px 0 ${Math.max(6, density.blockY - 4)}px !important;
+    }
+    .item { margin-bottom: ${density.itemMb}px !important; }
+    ${accent}
+  `
+}
+
+function stylesForTemplate(id: TemplateId, pageMarginMm: number, resume: ResumeDocument): string {
+  const gs = resolveGlobalStyle(resume)
   const pad = Math.max(0, pageMarginMm)
   const base = `
     * { box-sizing: border-box; }
@@ -213,7 +272,8 @@ function stylesForTemplate(id: TemplateId, pageMarginMm: number): string {
       .title-line { margin: 6px 0 4px; font-size: 12pt; color: #333; }
       .meta { margin: 0; font-size: 10.5pt; color: #444; }
       .links { margin-top: 8px; font-size: 10pt; }
-    `
+    ` +
+      globalStyleCss(id, gs)
     )
   }
 
@@ -229,7 +289,8 @@ function stylesForTemplate(id: TemplateId, pageMarginMm: number): string {
       .meta { margin: 0; }
       .links { margin-top: 6px; }
       h2 { border-bottom-color: #2563eb; color: #1e3a8a; }
-    `
+    ` +
+      globalStyleCss(id, gs)
     )
   }
 
@@ -245,7 +306,8 @@ function stylesForTemplate(id: TemplateId, pageMarginMm: number): string {
     .links { margin-top: 6px; font-size: 10pt; }
     h2 { border-bottom: none; text-transform: none; letter-spacing: 0; font-size: 11pt; color: #000; margin-top: 18px; }
     .item-head { flex-direction: column; gap: 2px; }
-  `
+  ` +
+    globalStyleCss(id, gs)
   )
 }
 
@@ -276,7 +338,7 @@ export interface ResumePrintHtmlOptions {
 export function buildResumePrintHtml(resume: ResumeDocument, opts?: ResumePrintHtmlOptions): string {
   const pageMarginMm = opts?.pageMarginMm ?? 14
   const body = renderBody(resume)
-  const css = stylesForTemplate(resume.templateId, pageMarginMm)
+  const css = stylesForTemplate(resume.templateId, pageMarginMm, resume)
   return `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>

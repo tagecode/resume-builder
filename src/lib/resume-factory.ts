@@ -4,13 +4,16 @@ import type {
   ExperienceEntry,
   PersonalSection,
   ProjectEntry,
+  ResumeBodyFont,
   ResumeDocument,
+  ResumeGlobalStyle,
+  ResumeLayoutDensity,
   ResumeSections,
   SectionVisibility,
   SectionVisibilityKey,
   TemplateId,
 } from '../shared/resume'
-import { DEFAULT_SECTION_ORDER, RESUME_SCHEMA_VERSION } from '../shared/resume'
+import { DEFAULT_GLOBAL_STYLE, DEFAULT_SECTION_ORDER, RESUME_SCHEMA_VERSION } from '../shared/resume'
 
 export function getSectionOrder(doc: ResumeDocument): SectionVisibilityKey[] {
   const o = doc.sectionOrder
@@ -45,11 +48,40 @@ export function reorderSectionKeys(
   return next
 }
 
+export function mergeGlobalStyle(input?: Partial<ResumeGlobalStyle>): ResumeGlobalStyle {
+  const d = { ...DEFAULT_GLOBAL_STYLE }
+  if (!input) {
+    return d
+  }
+  const fontScale = Number(input.fontScale)
+  const lineHeight = Number(input.lineHeight)
+  const accent = typeof input.accentColor === 'string' ? input.accentColor.trim() : ''
+  const density = input.density
+  const bodyFont = input.bodyFont
+  return {
+    fontScale: Number.isFinite(fontScale) ? Math.min(1.25, Math.max(0.85, fontScale)) : d.fontScale,
+    lineHeight: Number.isFinite(lineHeight) ? Math.min(1.2, Math.max(0.85, lineHeight)) : d.lineHeight,
+    accentColor:
+      accent === ''
+        ? ''
+        : /^#[0-9A-Fa-f]{6}$/.test(accent)
+          ? accent
+          : d.accentColor,
+    density: (['compact', 'normal', 'relaxed'] as const).includes(density as ResumeLayoutDensity)
+      ? (density as ResumeLayoutDensity)
+      : d.density,
+    bodyFont: (['template', 'serif', 'sans', 'mono'] as const).includes(bodyFont as ResumeBodyFont)
+      ? (bodyFont as ResumeBodyFont)
+      : d.bodyFont,
+  }
+}
+
 export function normalizeResumeDocument(doc: ResumeDocument): ResumeDocument {
   return {
     ...doc,
     schemaVersion: RESUME_SCHEMA_VERSION,
     sectionOrder: getSectionOrder(doc),
+    globalStyle: mergeGlobalStyle(doc.globalStyle),
   }
 }
 
@@ -170,6 +202,7 @@ export function createResumeDocument(options: {
     templateId: options.templateId ?? 'classic',
     visibility: defaultVisibility(),
     sectionOrder: [...DEFAULT_SECTION_ORDER],
+    globalStyle: mergeGlobalStyle({}),
     sections: options.sections ?? emptySections(),
   }
 }
@@ -180,7 +213,7 @@ export function cloneResumeForCopy(source: ResumeDocument): ResumeDocument {
   cloned.resumeId = newEntityId()
   cloned.name = `${source.name} 的副本`
   cloned.updatedAt = now
-  return cloned
+  return normalizeResumeDocument(cloned)
 }
 
 /** 从备份导入：新 ID、名称加后缀，避免覆盖本地同名同 ID 文件。 */

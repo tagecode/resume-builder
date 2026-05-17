@@ -7,6 +7,8 @@ import Store from 'electron-store'
 
 import { setupApplicationMenu } from './app-menu'
 import { readBackupFile } from './backup-io'
+import { clearDraft, listDraftSummaries, readDraft, writeDraft } from './draft-storage'
+import { renderHtmlToImageBuffer } from './image-export'
 import { renderHtmlToPdfBuffer } from './pdf-export'
 import { printHtmlWithDialog } from './print-html'
 import {
@@ -17,7 +19,12 @@ import {
   writeResumeAtomic,
 } from './resume-storage'
 import { BACKUP_FORMAT_VERSION, type ResumeBackupFileV1 } from '../src/shared/backup'
-import type { ExportPdfPayload, PrintHtmlResult, ThemeMode } from '../src/shared/electron'
+import type {
+  ExportImagePayload,
+  ExportPdfPayload,
+  PrintHtmlResult,
+  ThemeMode,
+} from '../src/shared/electron'
 import type { ResumeDocument } from '../src/shared/resume'
 import {
   cloneResumeForCopy,
@@ -31,14 +38,19 @@ import {
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const rendererDistPath = path.join(__dirname, '../dist/index.html')
 
-const settingsStore = new Store<{ theme: ThemeMode }>({
+const settingsStore = new Store<{ theme: ThemeMode; recentResumeIds: string[] }>({
   defaults: {
     theme: 'system',
+    recentResumeIds: [],
   },
 })
 
 function resumesDirPath() {
   return getResumesDir(app.getPath('userData'))
+}
+
+function userDataRootPath() {
+  return app.getPath('userData')
 }
 
 async function loadAllResumeDocuments(): Promise<ResumeDocument[]> {
@@ -122,6 +134,7 @@ app.whenReady().then(() => {
     })
     try {
       await writeResumeAtomic(resumesDirPath(), normalized)
+      await clearDraft(userDataRootPath(), normalized.resumeId)
       return { ok: true as const }
     } catch (err) {
       const message = err instanceof Error ? err.message : '保存失败'
@@ -132,6 +145,12 @@ app.whenReady().then(() => {
   ipcMain.handle('resume:delete', async (_e, resumeId: string) => {
     try {
       await deleteResume(resumesDirPath(), resumeId)
+      await clearDraft(userDataRootPath(), resumeId)
+      const prev = settingsStore.get('recentResumeIds', []) as string[]
+      settingsStore.set(
+        'recentResumeIds',
+        prev.filter((id) => id !== resumeId),
+      )
       return { ok: true as const }
     } catch (err) {
       const message = err instanceof Error ? err.message : '删除失败'
@@ -220,6 +239,95 @@ app.whenReady().then(() => {
       const message = err instanceof Error ? err.message : '导出失败'
       return { ok: false as const, reason: 'error' as const, message }
     }
+  })
+
+  ipcMain.handle('resume:export-image', async (_e, payload: ExportImagePayload) => {
+    const suggested = payload.suggestedFileName.replace(/[^\w\u4e00-\u9fff\-_. ]+/g, '_') || '简历'
+    const ext = payload.options.format === 'jpeg' ? 'jpg' : 'png'
+    try {
+      const win = targetWindow()
+      const dialogOptions = {
+        title: '导出长图',
+        defaultPath: path.join(app.getPath('documents'), `${suggested}.${ext}`),
+        filters:
+          payload.options.format === 'jpeg'
+            ? [{ name: 'JPEG', extensions: ['jpg', 'jpeg'] }]
+            : [{ name: 'PNG', extensions: ['png'] }],
+      }
+      const { filePath, canceled } = win
+        ? await dialog.showSaveDialog(win, dialogOptions)
+        : await dialog.showSaveDialog(dialogOptions)
+      if (canceled || !filePath) {
+        return { ok: false as const, reason: 'cancelled' as const }
+      }
+      let outPath = filePath
+      const lower = filePath.toLowerCase()
+      if (payload.options.format === 'jpeg' && !lower.endsWith('.jpg') && !lower.endsWith('.jpeg')) {
+        outPath = `${filePath}.jpg`
+      }
+      if (payload.options.format === 'png' && !lower.endsWith('.png')) {
+        outPath = `${filePath}.png`
+      }
+      const buf = await renderHtmlToImageBuffer(payload.html, payload.options)
+      await writeFile(outPath, buf)
+      return { ok: true as const, filePath: outPath }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '导出失败'
+      return { ok: false as const, reason: 'error' as const, message }
+    }
+  })
+
+  ipcMain.handle('draft:write', async (_e, doc: ResumeDocument) => {
+    await writeDraft(userDataRootPath(), doc)
+  })
+
+  ipcMain.handle('draft:read', async (_e, resumeId: string) => {
+    return readDraft(userDataRootPath(), resumeId)
+  })
+
+  ipcMain.handle('draft:clear', async (_e, resumeId: string) => {
+    await clearDraft(userDataRootPath(), resumeId)
+  })
+
+  ipcMain.handle('draft:list-newer', async () => {
+    const summaries = await listDraftSummaries(userDataRootPath())
+    const dir = resumesDirPath()
+    const out: Array<{ resumeId: string; draftUpdatedAt: string; diskUpdatedAt: string }> = []
+    for (const s of summaries) {
+      const disk = await readResume(dir, s.resumeId)
+      if (!disk) {
+        continue
+      }
+      if (s.updatedAt > disk.updatedAt) {
+        out.push({
+          resumeId: s.resumeId,
+          draftUpdatedAt: s.updatedAt,
+          diskUpdatedAt: disk.updatedAt,
+        })
+      }
+    }
+    return out
+  })
+
+  ipcMain.handle('recent:list', async () => {
+    const ids = settingsStore.get('recentResumeIds', []) as string[]
+    const dir = resumesDirPath()
+    const items = await listResumes(dir)
+    const map = new Map(items.map((it) => [it.resumeId, it]))
+    const out: typeof items = []
+    for (const id of ids) {
+      const it = map.get(id)
+      if (it) {
+        out.push(it)
+      }
+    }
+    return out
+  })
+
+  ipcMain.handle('recent:touch', (_e, resumeId: string) => {
+    const ids = (settingsStore.get('recentResumeIds', []) as string[]).filter(Boolean)
+    const next = [resumeId, ...ids.filter((i) => i !== resumeId)].slice(0, 15)
+    settingsStore.set('recentResumeIds', next)
   })
 
   ipcMain.handle('backup:export-all', async () => {

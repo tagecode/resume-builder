@@ -72,6 +72,33 @@ export type SectionVisibilityKey = keyof ResumeSections
 
 export type SectionVisibility = Record<SectionVisibilityKey, boolean>
 
+/** 全局样式（TS-03）：与模板叠加，预览/PDF/导出图同源 */
+export type ResumeBodyFont = 'template' | 'serif' | 'sans' | 'mono'
+
+export type ResumeLayoutDensity = 'compact' | 'normal' | 'relaxed'
+
+export interface ResumeGlobalStyle {
+  /** 相对模板正文字号的缩放，约 0.85–1.25 */
+  fontScale: number
+  /** 相对模板行高的倍率，约 0.85–1.2 */
+  lineHeight: number
+  /**
+   * 主题强调色（边框、标题区、链接等）；空字符串表示沿用模板默认色。
+   * 形如 #RRGGBB。
+   */
+  accentColor: string
+  density: ResumeLayoutDensity
+  bodyFont: ResumeBodyFont
+}
+
+export const DEFAULT_GLOBAL_STYLE: ResumeGlobalStyle = {
+  fontScale: 1,
+  lineHeight: 1,
+  accentColor: '',
+  density: 'normal',
+  bodyFont: 'template',
+}
+
 /** 编辑区 / 预览 / PDF 模块顺序（CE-03） */
 export const DEFAULT_SECTION_ORDER: SectionVisibilityKey[] = [
   'personal',
@@ -94,6 +121,8 @@ export interface ResumeDocument {
   visibility: SectionVisibility
   /** 模块顺序；缺省或无效时按 DEFAULT_SECTION_ORDER */
   sectionOrder?: SectionVisibilityKey[]
+  /** 全局排版微调（TS-03） */
+  globalStyle?: ResumeGlobalStyle
   sections: ResumeSections
 }
 
@@ -112,4 +141,11 @@ export interface PdfExportOptions {
   marginMm: number
   /** Chromium scale，约 0.5–2，默认 1 */
   scale: number
+}
+
+/** IO-02 导出整页长图（与预览同源 HTML） */
+export interface ExportImageOptions {
+  format: 'png' | 'jpeg'
+  /** 清晰度倍率 1–3，越大文件越大 */
+  pixelRatio: number
 }

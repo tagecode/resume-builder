@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 
 import type {
   ElectronApi,
+  ExportImagePayload,
   ExportPdfPayload,
   MenuAction,
   ResumeCreateMode,
@@ -22,6 +23,8 @@ const electronApi: ElectronApi = {
   duplicateResume: (resumeId: string) => ipcRenderer.invoke('resume:duplicate', resumeId),
   exportResumePdf: (payload: ExportPdfPayload) =>
     ipcRenderer.invoke('resume:export-pdf', payload),
+  exportResumeImage: (payload: ExportImagePayload) =>
+    ipcRenderer.invoke('resume:export-image', payload),
   exportBackupAll: () => ipcRenderer.invoke('backup:export-all'),
   exportBackupOne: (resumeId: string) => ipcRenderer.invoke('backup:export-one', resumeId),
   importBackup: () => ipcRenderer.invoke('backup:import'),
@@ -32,6 +35,12 @@ const electronApi: ElectronApi = {
     return () => ipcRenderer.removeListener(channel, handler)
   },
   printResumeHtml: (html: string) => ipcRenderer.invoke('resume:print-html', html),
+  writeResumeDraft: (doc: ResumeDocument) => ipcRenderer.invoke('draft:write', doc),
+  readResumeDraft: (resumeId: string) => ipcRenderer.invoke('draft:read', resumeId),
+  clearResumeDraft: (resumeId: string) => ipcRenderer.invoke('draft:clear', resumeId),
+  listDraftsNewerThanDisk: () => ipcRenderer.invoke('draft:list-newer'),
+  listRecentResumes: () => ipcRenderer.invoke('recent:list'),
+  touchRecentResume: (resumeId: string) => ipcRenderer.invoke('recent:touch', resumeId),
 }
 
 contextBridge.exposeInMainWorld('electronAPI', electronApi)
