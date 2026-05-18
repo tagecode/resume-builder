@@ -2,7 +2,7 @@ import { writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { app, BrowserWindow, dialog, ipcMain } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, screen } from 'electron'
 import Store from 'electron-store'
 
 import { setupApplicationMenu } from './app-menu'
@@ -38,12 +38,63 @@ import {
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const rendererDistPath = path.join(__dirname, '../dist/index.html')
 
-const settingsStore = new Store<{ theme: ThemeMode; recentResumeIds: string[] }>({
+type WindowBoundsPersisted = {
+  x: number
+  y: number
+  width: number
+  height: number
+  isMaximized?: boolean
+}
+
+const MAIN_MIN_WIDTH = 1040
+const MAIN_MIN_HEIGHT = 720
+
+const settingsStore = new Store<{
+  theme: ThemeMode
+  recentResumeIds: string[]
+  windowBounds?: WindowBoundsPersisted
+}>({
   defaults: {
     theme: 'system',
     recentResumeIds: [],
   },
 })
+
+function isWindowBoundsVisibleOnAnyDisplay(bounds: Electron.Rectangle): boolean {
+  const { x, y, width, height } = bounds
+  const right = x + width
+  const bottom = y + height
+  const inset = 48
+  for (const d of screen.getAllDisplays()) {
+    const w = d.workArea
+    if (right > w.x + inset && x < w.x + w.width - inset && bottom > w.y + inset && y < w.y + w.height - inset) {
+      return true
+    }
+  }
+  return false
+}
+
+function readMainWindowBounds(): { rect: Electron.Rectangle; isMaximized: boolean } | null {
+  const raw = settingsStore.get('windowBounds')
+  if (!raw) {
+    return null
+  }
+  const w = Number(raw.width)
+  const h = Number(raw.height)
+  const x = Number(raw.x)
+  const y = Number(raw.y)
+  if (![w, h, x, y].every((n) => Number.isFinite(n))) {
+    return null
+  }
+  if (w < MAIN_MIN_WIDTH || h < MAIN_MIN_HEIGHT) {
+    return null
+  }
+  const rect = { x, y, width: w, height: h }
+  if (!isWindowBoundsVisibleOnAnyDisplay(rect)) {
+    return null
+  }
+  return { rect, isMaximized: Boolean(raw.isMaximized) }
+}
 
 function resumesDirPath() {
   return getResumesDir(app.getPath('userData'))
@@ -71,19 +122,43 @@ function targetWindow(): BrowserWindow | null {
 }
 
 function createMainWindow() {
+  const stored = readMainWindowBounds()
   const window = new BrowserWindow({
-    width: 1280,
-    height: 840,
-    minWidth: 1040,
-    minHeight: 720,
+    ...(stored
+      ? { x: stored.rect.x, y: stored.rect.y, width: stored.rect.width, height: stored.rect.height }
+      : { width: 1280, height: 840 }),
+    minWidth: MAIN_MIN_WIDTH,
+    minHeight: MAIN_MIN_HEIGHT,
     title: 'Resume Builder',
     autoHideMenuBar: false,
     backgroundColor: '#09090b',
+    show: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.mjs'),
       contextIsolation: true,
       nodeIntegration: false,
     },
+  })
+
+  window.on('close', () => {
+    if (window.isDestroyed()) {
+      return
+    }
+    const normal = window.isMaximized() ? window.getNormalBounds() : window.getBounds()
+    settingsStore.set('windowBounds', {
+      x: normal.x,
+      y: normal.y,
+      width: normal.width,
+      height: normal.height,
+      isMaximized: window.isMaximized(),
+    })
+  })
+
+  window.once('ready-to-show', () => {
+    if (stored?.isMaximized) {
+      window.maximize()
+    }
+    window.show()
   })
 
   if (process.env.VITE_DEV_SERVER_URL) {

@@ -19,6 +19,7 @@ function ShortcutsHelpDialog({ open, onOpenChange }: { open: boolean; onOpenChan
     { action: '保存', keys: 'Ctrl + S（macOS：⌘ + S）' },
     { action: '打印…', keys: 'Ctrl + P（macOS：⌘ + P）' },
     { action: '导出 PDF…', keys: 'Ctrl + Shift + E（macOS：⌘ + Shift + E）' },
+    { action: '预览缩放（放大 / 缩小 / 复位）', keys: 'Ctrl + + / - / 0（macOS：⌘ 同上）' },
     { action: '快捷键说明', keys: 'Ctrl + /（macOS：⌘ + /）' },
   ]
   return (
@@ -112,7 +113,6 @@ export function ResumeApp() {
           if (view === 'editor') {
             void editorRef.current?.exportImage()
           }
-          break
           break
       }
     })

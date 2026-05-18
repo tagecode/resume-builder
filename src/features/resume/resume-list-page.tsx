@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from 'react'
-import { Copy, Download, FilePlus, FileText, Pencil, Trash2, Upload } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { Copy, Download, FilePlus, FileText, Pencil, Search, Trash2, Upload } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader } from '@/components/ui/card'
@@ -21,6 +21,8 @@ import type { ThemeMode } from '@/shared/electron'
 function needsElectron(): boolean {
   return typeof window.electronAPI === 'undefined'
 }
+
+type ListSortKey = 'updated-desc' | 'updated-asc' | 'name-asc' | 'name-desc'
 
 export function ResumeListPage({
   theme,
@@ -47,6 +49,8 @@ export function ResumeListPage({
   const [successHint, setSuccessHint] = useState<string | null>(null)
   const [recentItems, setRecentItems] = useState<ResumeListItem[]>([])
   const [draftNewerIds, setDraftNewerIds] = useState<Set<string>>(() => new Set())
+  const [searchQuery, setSearchQuery] = useState('')
+  const [sortKey, setSortKey] = useState<ListSortKey>('updated-desc')
 
   const refresh = useCallback(async () => {
     if (needsElectron()) {
@@ -77,6 +81,25 @@ export function ResumeListPage({
   useEffect(() => {
     void refresh()
   }, [refresh])
+
+  const displayedItems = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase()
+    let list = q ? items.filter((it) => it.name.toLowerCase().includes(q)) : items
+    list = [...list].sort((a, b) => {
+      switch (sortKey) {
+        case 'name-asc':
+          return a.name.localeCompare(b.name, 'zh-Hans-CN')
+        case 'name-desc':
+          return b.name.localeCompare(a.name, 'zh-Hans-CN')
+        case 'updated-asc':
+          return a.updatedAt.localeCompare(b.updatedAt)
+        case 'updated-desc':
+        default:
+          return b.updatedAt.localeCompare(a.updatedAt)
+      }
+    })
+    return list
+  }, [items, searchQuery, sortKey])
 
   async function handleCreate() {
     const err = validateResumeName(newName)
@@ -268,6 +291,36 @@ export function ResumeListPage({
           </Card>
         ) : null}
 
+        {!loading && items.length > 0 ? (
+          <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+            <FieldLike label="搜索">
+              <div className="relative max-w-md">
+                <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="按简历名称过滤…"
+                  className="pl-9"
+                  aria-label="搜索简历名称"
+                />
+              </div>
+            </FieldLike>
+            <FieldLike label="排序">
+              <select
+                className="flex h-9 min-w-[200px] rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                value={sortKey}
+                onChange={(e) => setSortKey(e.target.value as ListSortKey)}
+                aria-label="简历列表排序方式"
+              >
+                <option value="updated-desc">更新时间（新 → 旧）</option>
+                <option value="updated-asc">更新时间（旧 → 新）</option>
+                <option value="name-asc">名称（A → Z）</option>
+                <option value="name-desc">名称（Z → A）</option>
+              </select>
+            </FieldLike>
+          </div>
+        ) : null}
+
         {loading ? (
           <p className="text-muted-foreground">加载中…</p>
         ) : items.length === 0 ? (
@@ -277,9 +330,16 @@ export function ResumeListPage({
               点击「新建空白」或「从示例创建」开始。
             </CardContent>
           </Card>
+        ) : displayedItems.length === 0 ? (
+          <Card>
+            <CardHeader className="text-base font-medium">没有匹配的简历</CardHeader>
+            <CardContent className="text-sm text-muted-foreground">
+              当前筛选条件下无结果，可清空搜索词或调整排序。
+            </CardContent>
+          </Card>
         ) : (
           <ul className="space-y-3">
-            {items.map((item) => (
+            {displayedItems.map((item) => (
               <li key={item.resumeId}>
                 <Card className="transition-colors hover:bg-accent/40">
                   <CardContent className="flex flex-wrap items-center justify-between gap-3 p-4">
@@ -399,6 +459,15 @@ export function ResumeListPage({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+    </div>
+  )
+}
+
+function FieldLike({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="space-y-1.5">
+      <span className="text-xs font-medium text-muted-foreground">{label}</span>
+      {children}
     </div>
   )
 }

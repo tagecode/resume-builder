@@ -157,6 +157,7 @@ ref) {
   const [pdfPaper, setPdfPaper] = useState<'A4' | 'Letter'>('A4')
   const [pdfMarginMm, setPdfMarginMm] = useState(14)
   const [pdfScale, setPdfScale] = useState(1)
+  const [previewZoom, setPreviewZoom] = useState(1)
 
   const [unsavedOpen, setUnsavedOpen] = useState(false)
   const [draftPrompt, setDraftPrompt] = useState<{ disk: ResumeDocument; draft: ResumeDocument } | null>(
@@ -179,6 +180,35 @@ ref) {
   useEffect(() => {
     setPreviewPageCount(null)
   }, [previewHtml])
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!e.ctrlKey && !e.metaKey) {
+        return
+      }
+      const el = e.target as HTMLElement | null
+      const tag = el?.tagName ?? ''
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el?.isContentEditable) {
+        return
+      }
+      if (e.key === '=' || e.key === '+') {
+        e.preventDefault()
+        setPreviewZoom((z) => Math.min(1.75, Math.round((z + 0.1) * 100) / 100))
+        return
+      }
+      if (e.key === '-' || e.key === '_') {
+        e.preventDefault()
+        setPreviewZoom((z) => Math.max(0.5, Math.round((z - 0.1) * 100) / 100))
+        return
+      }
+      if (e.key === '0') {
+        e.preventDefault()
+        setPreviewZoom(1)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
 
   const persist = useCallback(async (explicit?: ResumeDocument): Promise<boolean> => {
     if (!window.electronAPI) {
@@ -1258,29 +1288,63 @@ ref) {
         </div>
 
         <div className="flex min-h-[45vh] flex-1 flex-col bg-muted/30 lg:min-h-0 lg:w-1/2">
-          <div className="shrink-0 border-b border-border px-3 py-2 text-xs font-medium text-muted-foreground">
-            实时预览（与导出同源 HTML）
-            {previewPageCount != null ? (
-              <span className="ml-2 font-normal text-muted-foreground">
-                · 按当前纸张/边距估算约 {previewPageCount} 页（仅供参考，实际分页因打印机/PDF 引擎可能略有差异）
-              </span>
-            ) : null}
+          <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-border px-3 py-2 text-xs">
+            <span className="font-medium text-muted-foreground">
+              实时预览（与导出同源 HTML）
+              {previewPageCount != null ? (
+                <span className="ml-2 font-normal">
+                  · 按当前纸张/边距估算约 {previewPageCount} 页（仅供参考，实际分页因打印机/PDF 引擎可能略有差异）
+                </span>
+              ) : null}
+            </span>
+            <div className="ml-auto flex min-w-[min(100%,14rem)] flex-1 flex-wrap items-center gap-2 sm:flex-initial sm:justify-end">
+              <span className="shrink-0 text-muted-foreground">缩放 {Math.round(previewZoom * 100)}%</span>
+              <input
+                type="range"
+                min={0.5}
+                max={1.75}
+                step={0.05}
+                value={previewZoom}
+                onChange={(e) => setPreviewZoom(Number(e.target.value))}
+                className="h-1.5 min-w-[6rem] flex-1 accent-primary sm:w-28 sm:flex-initial"
+                aria-label="预览缩放"
+              />
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="shrink-0"
+                onClick={() => setPreviewZoom(1)}
+              >
+                100%
+              </Button>
+            </div>
           </div>
-          <iframe
-            ref={previewIframeRef}
-            title="preview"
-            className="min-h-0 flex-1 w-full border-0 bg-white"
-            srcDoc={previewHtml}
-            onLoad={() => {
-              const frame = previewIframeRef.current
-              const body = frame?.contentDocument?.body
-              if (!body) {
-                return
-              }
-              const n = estimatePrintPageCount(body.scrollHeight, pdfMarginMm, pdfPaper)
-              setPreviewPageCount(n)
-            }}
-          />
+          <div className="min-h-0 flex-1 overflow-auto">
+            <div
+              style={{
+                transform: `scale(${previewZoom})`,
+                transformOrigin: 'top left',
+                width: `${100 / previewZoom}%`,
+              }}
+            >
+              <iframe
+                ref={previewIframeRef}
+                title="preview"
+                className="block w-full border-0 bg-white"
+                srcDoc={previewHtml}
+                onLoad={() => {
+                  const frame = previewIframeRef.current
+                  const body = frame?.contentDocument?.body
+                  if (!body) {
+                    return
+                  }
+                  const n = estimatePrintPageCount(body.scrollHeight, pdfMarginMm, pdfPaper)
+                  setPreviewPageCount(n)
+                }}
+              />
+            </div>
+          </div>
         </div>
       </div>
 

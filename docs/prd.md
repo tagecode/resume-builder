@@ -3,8 +3,8 @@
 | 属性 | 内容 |
 |------|------|
 | 产品名称 | Resume Builder（个人简历制作器，一款跨平台的桌面应用） |
-| 文档版本 | 1.3 |
-| 基线修订 | 2026-05-16（§10：同步 V1.1/V1.2 条目的当前实现） |
+| 文档版本 | 1.4 |
+| 基线修订 | 2026-05-18（§10：PM-03 列表搜索排序、PV-04 预览缩放、DT-03 窗口记忆） |
 | 基线说明 | 与 `docs/feature.md` 功能清单一致；实现状态以本文 **§10 当前实现基线** 为准 |
 | 技术栈 | Electron、Vite、React、TypeScript、Tailwind CSS v4、shadcn/ui、electron-store |
 
@@ -223,7 +223,7 @@
 
 ---
 
-## 10. 当前实现基线（2026-05-16）
+## 10. 当前实现基线（2026-05-18）
 
 > 用于需求与实现的差距分析；随开发更新本小节。
 
@@ -242,7 +242,7 @@
 |------|------|------|
 | Electron 壳层 / 单主窗口 | 已具备 | `electron/main.ts` |
 | Preload / `contextIsolation` 与渲染 API | 已具备 | 源码 `electron/preload.ts`，构建产出 `dist-electron/preload.mjs` 暴露：`getAppMetadata`；主题读写；`listResumes` / `readResume` / `saveResume` / `deleteResume` / `createResume` / `duplicateResume`；导出 PDF；导出图片（PNG/JPEG，长截图）；`printResumeHtml`；备份导出/导入（单份/全部）；`onMenuAction`；草稿 `write` / `read` / `clear` / `list-newer`；最近 `list` / `touch` |
-| 本地设置（electron-store） | 已具备 | `theme`（system/light/dark）；`recentResumeIds`（最近打开，**最多约 15 条**） |
+| 本地设置（electron-store） | 已具备 | `theme`（system/light/dark）；`recentResumeIds`（最近打开，**最多约 15 条**）；`windowBounds`（主窗口位置/尺寸与是否最大化，关闭时写入；超出当前显示器工作区时忽略） |
 | 渲染入口 | 已具备 | `src/App.tsx` → `ResumeApp`（`src/features/resume/resume-app.tsx`） |
 | 简历 JSON 持久化（DS-01 / MVP §4） | 已具备 | `{userData}/resumes/{resumeId}.json` 原子写入（`electron/resume-storage.ts`） |
 | 列表与项目（PM-01/02/04/05） | 已具备 | `resume-list-page.tsx`：新建空白/示例、初始模板选择、重命名、复制、删除确认；编辑器内保存、Cmd/Ctrl+S、未保存返回列表时保存/放弃/取消；主进程保存时简历名校验 |
@@ -259,8 +259,9 @@
 | 草稿写入策略 | 已具备 | 防抖写入主文件 + **延时**写入草稿文件；异常退出后可经弹窗恢复 |
 | 原生菜单（DT-05） | 已具备 | 应用菜单与 IPC `onMenuAction` 协同 |
 | 快捷键说明（EF-04） | 已具备 | 现有帮助/说明路径覆盖主要快捷键（以产品 UI 为准） |
-| 列表搜索、排序（PM-03） | 未实现 | 名称搜索、多字段排序等仍待接入 |
-| 预览缩放（PV-04） | 未实现 | 滑块/快捷键缩放预览仍待接入 |
+| 列表搜索、排序（PM-03） | 已具备 | `resume-list-page.tsx`：按名称实时过滤；排序：更新时间升/降、名称 A↔Z（`zh-Hans-CN`） |
+| 预览缩放（PV-04） | 已具备 | `resume-editor-page.tsx`：预览区缩放滑块 + 100% 复位；编辑器内且非输入框焦点时 **Ctrl/Cmd + +/-**、**Ctrl/Cmd + 0** 复位（帮助弹窗已列） |
+| 主窗口几何记忆（DT-03） | 已具备 | `electron/main.ts`：`windowBounds` 持久化；`ready-to-show` 再显示；最大化状态恢复 |
 | 最近与草稿恢复（PM-06） | 部分：已实现「草稿新于磁盘」提示与弹窗恢复 + 最近列表联动；**未**声称覆盖 PRD 全文所述的「最近列表异常恢复」完整场景 UI | 与 §6.1 PM-06 全文对照如有差距，后续迭代补齐 |
 | `AppShell` 组件 | 未接入主流程 | `src/components/app-shell.tsx` 仍存在于仓库，**未**作为当前 `App` 根组件使用 |
 
